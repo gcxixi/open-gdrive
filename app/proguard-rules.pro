@@ -1,0 +1,2 @@
+-keep class com.squareup.moshi.** { *; }
+-dontwarn org.jetbrains.annotations.**
