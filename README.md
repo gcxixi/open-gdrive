@@ -29,6 +29,14 @@ For local debug builds, obtain the fingerprint with:
 
 For GitHub releases, use the SHA-1 of the private release keystore stored in repository Actions secrets.
 
+Current release certificate SHA-1:
+
+```text
+C9:9F:66:48:3A:5F:F3:CE:5E:F6:89:A8:FF:71:E0:57:16:F5:CA:32
+```
+
+The local backup is stored outside the repository at `~/Library/Application Support/open-gdrive/signing/open-gdrive-release.jks`; its password is in macOS Keychain under `open-gdrive-release-keystore`.
+
 ## Build
 
 Requirements: JDK 17 and Android SDK 36.
