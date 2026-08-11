@@ -29,9 +29,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -111,6 +108,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import compose.icons.SimpleIcons
@@ -161,14 +159,6 @@ fun OpenGDriveApp(viewModel: OpenGDriveViewModel, onAuthorize: () -> Unit) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         snackbarHost = { SnackbarHost(snackbar) },
-        topBar = {
-            CompactHeader(
-                state = state,
-                onToggleFilePane = viewModel::toggleFilePane,
-                onTogglePreviewPane = viewModel::togglePreviewPane,
-                onRefresh = viewModel::refresh,
-            )
-        },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             if (!state.authorized) {
@@ -184,6 +174,9 @@ fun OpenGDriveApp(viewModel: OpenGDriveViewModel, onAuthorize: () -> Unit) {
                     onCreate = viewModel::createMarkdown,
                     onRename = viewModel::renameMarkdown,
                     onDelete = viewModel::deleteFiles,
+                    onToggleFilePane = viewModel::toggleFilePane,
+                    onTogglePreviewPane = viewModel::togglePreviewPane,
+                    onRefresh = viewModel::refresh,
                 )
             }
             if (state.loading) {
@@ -193,49 +186,6 @@ fun OpenGDriveApp(viewModel: OpenGDriveViewModel, onAuthorize: () -> Unit) {
                     modifier = Modifier.align(Alignment.Center),
                 ) {
                     CircularProgressIndicator(Modifier.padding(20.dp).size(30.dp), strokeWidth = 3.dp)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CompactHeader(
-    state: EditorState,
-    onToggleFilePane: () -> Unit,
-    onTogglePreviewPane: () -> Unit,
-    onRefresh: () -> Unit,
-) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .height(48.dp)
-                .padding(end = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Spacer(Modifier.weight(1f))
-            if (state.authorized) {
-                if (state.editMode || state.saveState != SaveState.Saved) SaveIndicator(state.saveState)
-                if (state.selected != null) {
-                    IconButton(onClick = onToggleFilePane) {
-                        Icon(
-                            if (state.filePaneVisible) Icons.Default.MenuOpen else Icons.Default.FolderOpen,
-                            contentDescription = if (state.filePaneVisible) "Hide file list" else "Show file list",
-                        )
-                    }
-                }
-                if (state.editMode) {
-                    IconButton(onClick = onTogglePreviewPane) {
-                        Icon(
-                            if (state.previewPaneVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                            contentDescription = if (state.previewPaneVisible) "Hide preview" else "Show preview",
-                        )
-                    }
-                }
-                IconButton(onClick = onRefresh) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Refresh files")
                 }
             }
         }
@@ -285,8 +235,12 @@ private fun Workspace(
     onCreate: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: (List<DriveFile>) -> Unit,
+    onToggleFilePane: () -> Unit,
+    onTogglePreviewPane: () -> Unit,
+    onRefresh: () -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
+        val toolbarReservedWidth = workspaceToolbarReservedWidth(state)
         if (maxWidth >= 840.dp) {
             Row(
                 Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer).padding(12.dp),
@@ -302,14 +256,28 @@ private fun Workspace(
                         onPathClick = onPathClick,
                         onCreate = onCreate,
                         onDelete = onDelete,
+                        toolbarReservedWidth = 0.dp,
                         modifier = Modifier.width(if (state.editMode) 300.dp else 340.dp),
                     )
                 }
                 if (state.editMode) {
-                    EditorPane(state, onEdit, onToggleEdit, onSave, onRename, Modifier.weight(1f))
+                    EditorPane(
+                        state,
+                        onEdit,
+                        onToggleEdit,
+                        onSave,
+                        onRename,
+                        toolbarReservedWidth = if (state.previewPaneVisible) 0.dp else toolbarReservedWidth,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
                 if (!state.editMode || state.previewPaneVisible) {
-                    PreviewPane(state, onToggleEdit, Modifier.weight(1f))
+                    PreviewPane(
+                        state,
+                        onToggleEdit,
+                        toolbarReservedWidth = toolbarReservedWidth,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
             }
         } else {
@@ -323,9 +291,68 @@ private fun Workspace(
                 onCreate,
                 onRename,
                 onDelete,
+                toolbarReservedWidth,
             )
         }
+        FloatingWorkspaceToolbar(
+            state = state,
+            onToggleFilePane = onToggleFilePane,
+            onTogglePreviewPane = onTogglePreviewPane,
+            onRefresh = onRefresh,
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 16.dp, end = 16.dp),
+        )
     }
+}
+
+@Composable
+private fun FloatingWorkspaceToolbar(
+    state: EditorState,
+    onToggleFilePane: () -> Unit,
+    onTogglePreviewPane: () -> Unit,
+    onRefresh: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = CircleShape,
+        tonalElevation = 4.dp,
+        shadowElevation = 2.dp,
+        modifier = modifier,
+    ) {
+        Row(
+            Modifier.height(48.dp).padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (state.editMode || state.saveState != SaveState.Saved) SaveIndicator(state.saveState)
+            if (state.selected != null) {
+                IconButton(onClick = onToggleFilePane) {
+                    Icon(
+                        if (state.filePaneVisible) Icons.Default.MenuOpen else Icons.Default.FolderOpen,
+                        contentDescription = if (state.filePaneVisible) "Hide file list" else "Show file list",
+                    )
+                }
+            }
+            if (state.editMode) {
+                IconButton(onClick = onTogglePreviewPane) {
+                    Icon(
+                        if (state.previewPaneVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                        contentDescription = if (state.previewPaneVisible) "Hide preview" else "Show preview",
+                    )
+                }
+            }
+            IconButton(onClick = onRefresh) {
+                Icon(Icons.Default.Refresh, contentDescription = "Refresh files")
+            }
+        }
+    }
+}
+
+private fun workspaceToolbarReservedWidth(state: EditorState): Dp {
+    val actionCount = 1 +
+        (if (state.selected != null) 1 else 0) +
+        (if (state.editMode) 1 else 0)
+    val saveIndicatorWidth = if (state.editMode || state.saveState != SaveState.Saved) 104 else 0
+    return (actionCount * 48 + saveIndicatorWidth + 20).dp
 }
 
 @Composable
@@ -338,6 +365,7 @@ private fun FilePane(
     onPathClick: (Int) -> Unit,
     onCreate: () -> Unit,
     onDelete: (List<DriveFile>) -> Unit,
+    toolbarReservedWidth: Dp,
     modifier: Modifier = Modifier,
 ) {
     var selectedIds by remember(path) { mutableStateOf(emptySet<String>()) }
@@ -358,9 +386,10 @@ private fun FilePane(
                     count = selectedIds.size,
                     onClose = { selectedIds = emptySet() },
                     onDelete = { deleteRequest = files.filter { it.id in selectedIds } },
+                    toolbarReservedWidth = toolbarReservedWidth,
                 )
             } else {
-                Breadcrumbs(path, onPathClick, onCreate)
+                Breadcrumbs(path, onPathClick, onCreate, toolbarReservedWidth)
             }
             if (files.isEmpty()) {
                 Column(
@@ -419,9 +448,17 @@ private fun FilePane(
 }
 
 @Composable
-private fun SelectionToolbar(count: Int, onClose: () -> Unit, onDelete: () -> Unit) {
+private fun SelectionToolbar(
+    count: Int,
+    onClose: () -> Unit,
+    onDelete: () -> Unit,
+    toolbarReservedWidth: Dp,
+) {
     Row(
-        Modifier.fillMaxWidth().height(76.dp).padding(horizontal = 8.dp),
+        Modifier
+            .fillMaxWidth()
+            .height(76.dp)
+            .padding(start = 8.dp, end = 8.dp + toolbarReservedWidth),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Exit selection") }
@@ -514,8 +551,17 @@ private fun SwipeFileRow(
 }
 
 @Composable
-private fun Breadcrumbs(path: List<DriveFolder>, onPathClick: (Int) -> Unit, onCreate: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
+private fun Breadcrumbs(
+    path: List<DriveFolder>,
+    onPathClick: (Int) -> Unit,
+    onCreate: () -> Unit,
+    toolbarReservedWidth: Dp,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp + toolbarReservedWidth, top = 14.dp, bottom = 14.dp),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 "FILES",
@@ -643,6 +689,7 @@ private fun DeleteConfirmationDialog(
 private fun PreviewPane(
     state: EditorState,
     onToggleEdit: () -> Unit,
+    toolbarReservedWidth: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -658,7 +705,10 @@ private fun PreviewPane(
                 return@Column
             }
             Row(
-                Modifier.fillMaxWidth().height(68.dp).padding(horizontal = 22.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .height(68.dp)
+                    .padding(start = 22.dp, end = 22.dp + toolbarReservedWidth),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
@@ -716,6 +766,7 @@ private fun EditorPane(
     onToggleEdit: () -> Unit,
     onSave: () -> Unit,
     onRename: (String) -> Unit,
+    toolbarReservedWidth: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
     var showRename by remember(state.selected?.file?.id) { mutableStateOf(false) }
@@ -727,7 +778,10 @@ private fun EditorPane(
     ) {
         Column(Modifier.fillMaxSize()) {
             Row(
-                Modifier.fillMaxWidth().height(68.dp).padding(horizontal = 16.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .height(68.dp)
+                    .padding(start = 16.dp, end = 16.dp + toolbarReservedWidth),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -1030,6 +1084,7 @@ private fun CompactWorkspace(
     onCreate: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: (List<DriveFile>) -> Unit,
+    toolbarReservedWidth: Dp,
 ) {
     var showFiles by remember(state.folderPath) { mutableStateOf(state.selected == null) }
     if (showFiles || state.selected == null) {
@@ -1048,6 +1103,7 @@ private fun CompactWorkspace(
                 showFiles = false
             },
             onDelete = onDelete,
+            toolbarReservedWidth = toolbarReservedWidth,
             modifier = Modifier.fillMaxSize(),
         )
     } else {
@@ -1058,9 +1114,22 @@ private fun CompactWorkspace(
                 Text("Files")
             }
             if (state.editMode) {
-                EditorPane(state, onEdit, onToggleEdit, onSave, onRename, Modifier.weight(1f))
+                EditorPane(
+                    state,
+                    onEdit,
+                    onToggleEdit,
+                    onSave,
+                    onRename,
+                    toolbarReservedWidth = toolbarReservedWidth,
+                    modifier = Modifier.weight(1f),
+                )
             } else {
-                PreviewPane(state, onToggleEdit, Modifier.weight(1f))
+                PreviewPane(
+                    state,
+                    onToggleEdit,
+                    toolbarReservedWidth = toolbarReservedWidth,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
     }
