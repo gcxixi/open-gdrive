@@ -6,10 +6,14 @@ import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import android.text.method.LinkMovementMethod
 import android.widget.TextView
+import androidx.compose.animation.core.animate
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,8 +25,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
@@ -73,7 +77,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -83,17 +86,17 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
-import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -107,6 +110,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import compose.icons.SimpleIcons
@@ -140,6 +144,7 @@ import java.time.format.FormatStyle
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -207,10 +212,9 @@ private fun CompactHeader(
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.statusBars)
                 .height(48.dp)
-                .padding(start = 18.dp, end = 6.dp),
+                .padding(end = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Open GDrive", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.weight(1f))
             if (state.authorized) {
                 if (state.editMode || state.saveState != SaveState.Saved) SaveIndicator(state.saveState)
@@ -428,7 +432,6 @@ private fun SelectionToolbar(count: Int, onClose: () -> Unit, onDelete: () -> Un
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SwipeFileRow(
     file: DriveFile,
@@ -440,48 +443,73 @@ private fun SwipeFileRow(
     onLongClick: () -> Unit,
     onRequestDelete: () -> Unit,
 ) {
-    val dismissState = rememberSwipeToDismissBoxState(
-        positionalThreshold = { distance -> distance * 0.3f },
-    )
-    LaunchedEffect(selectionMode) {
-        if (selectionMode) dismissState.reset()
+    val actionWidth = 92.dp
+    val actionWidthPx = with(LocalDensity.current) { actionWidth.toPx() }
+    var dragOffset by remember(file.id) { mutableFloatStateOf(0f) }
+    val scope = rememberCoroutineScope()
+    val draggableState = rememberDraggableState { delta ->
+        dragOffset = (dragOffset + delta).coerceIn(-actionWidthPx, 0f)
     }
-    SwipeToDismissBox(
-        state = dismissState,
-        enableDismissFromStartToEnd = false,
-        enableDismissFromEndToStart = !selectionMode,
-        backgroundContent = {
-            Row(
-                Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.errorContainer)
-                    .padding(end = 8.dp),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TextButton(onClick = onRequestDelete) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = "Delete ${file.name}",
-                        tint = MaterialTheme.colorScheme.onErrorContainer,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text("Delete", color = MaterialTheme.colorScheme.onErrorContainer)
-                }
-            }
-        },
-        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp).clip(RoundedCornerShape(12.dp)),
+    LaunchedEffect(selectionMode) {
+        if (selectionMode) dragOffset = 0f
+    }
+    Box(
+        Modifier
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+            .fillMaxWidth()
+            .height(44.dp)
+            .clip(RoundedCornerShape(12.dp)),
     ) {
-        FileRow(
-            file = file,
-            selected = selected,
-            checked = checked,
-            selectionMode = selectionMode,
-            syncState = syncState,
-            onClick = onClick,
-            onLongClick = onLongClick,
-        )
+        Row(
+            Modifier
+                .align(Alignment.CenterEnd)
+                .width(actionWidth)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.errorContainer),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = onRequestDelete) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Delete ${file.name}",
+                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text("Delete", color = MaterialTheme.colorScheme.onErrorContainer)
+            }
+        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .offset { IntOffset(dragOffset.roundToInt(), 0) }
+                .draggable(
+                    state = draggableState,
+                    orientation = Orientation.Horizontal,
+                    enabled = !selectionMode,
+                    onDragStopped = {
+                        val target = if (dragOffset <= -actionWidthPx * 0.45f) -actionWidthPx else 0f
+                        animate(dragOffset, target) { value, _ -> dragOffset = value }
+                    },
+                ),
+        ) {
+            FileRow(
+                file = file,
+                selected = selected,
+                checked = checked,
+                selectionMode = selectionMode,
+                syncState = syncState,
+                onClick = {
+                    if (dragOffset < 0f) {
+                        scope.launch { animate(dragOffset, 0f) { value, _ -> dragOffset = value } }
+                    } else {
+                        onClick()
+                    }
+                },
+                onLongClick = onLongClick,
+            )
+        }
     }
 }
 
@@ -541,7 +569,7 @@ private fun FileRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 42.dp)
+            .fillMaxHeight()
             .background(background)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,

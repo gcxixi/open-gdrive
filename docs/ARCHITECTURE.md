@@ -13,7 +13,7 @@ Open GDrive is a tablet-first Android 16 app. Google Drive is the source of trut
 7. A dirty local revision is uploaded after five seconds or immediately on explicit save. `If-Match` prevents silently replacing a remotely changed file when Drive supplies an ETag.
 8. New documents begin as `untitled-N.md` local drafts. A multipart Drive upload later creates metadata and content together; a successful response binds the stable local ID to the new Drive file ID.
 9. Reopening a file is cache-first. The last preview is rendered immediately while a lightweight Drive metadata request validates its ETag, or its modified time and size when no ETag is available. A changed revision is downloaded and rendered only after that comparison.
-10. Deletion is explicit and recoverable for remote files. A swipe action or long-press multi-selection always opens a confirmation dialog, then remote files and folders are patched with `trashed=true`. Unsynced local-only drafts are permanently removed after the same confirmation.
+10. Deletion is explicit and recoverable for remote files. A bounded bidirectional row drag reveals exactly one delete action and can be dragged closed; long-press starts checkbox multi-selection. Both paths always open a confirmation dialog, then remote files and folders are patched with `trashed=true`. Unsynced local-only drafts are permanently removed after the same confirmation.
 
 ## Preview routing
 
