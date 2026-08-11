@@ -51,6 +51,22 @@ class DriveApi(
         }
     }
 
+    suspend fun getMetadata(fileId: String, accessToken: String): DriveMetadata = withContext(Dispatchers.IO) {
+        val url = "https://www.googleapis.com/drive/v3/files/$fileId".toHttpUrl().newBuilder()
+            .addQueryParameter(
+                "fields",
+                "id,name,mimeType,modifiedTime,size,webViewLink,capabilities(canEdit,canDownload)",
+            )
+            .build()
+        client.newCall(authorizedRequest(url.toString(), accessToken).build()).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            ensureSuccessful(response.code, body)
+            val file = parseDriveFileJson(body)
+                ?: throw DriveException.Http(response.code, "Drive returned no file metadata")
+            DriveMetadata(file, response.header("ETag"))
+        }
+    }
+
     suspend fun update(
         fileId: String,
         markdown: String,

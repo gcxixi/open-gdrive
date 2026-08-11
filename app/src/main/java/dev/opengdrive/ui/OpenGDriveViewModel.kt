@@ -12,10 +12,13 @@ import dev.opengdrive.data.DriveFolder
 import dev.opengdrive.data.LocalMarkdownDocument
 import dev.opengdrive.data.LocalMarkdownStore
 import dev.opengdrive.data.OpenDriveFile
+import dev.opengdrive.data.PreviewCacheStore
 import dev.opengdrive.data.PreviewData
 import dev.opengdrive.data.isFolder
 import dev.opengdrive.data.isMarkdown
+import dev.opengdrive.data.matches
 import java.io.File
+import java.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -34,13 +37,18 @@ data class EditorState(
     val editMode: Boolean = false,
     val filePaneVisible: Boolean = true,
     val previewPaneVisible: Boolean = true,
+    val validationState: ValidationState = ValidationState.Ready,
     val message: String? = null,
 ) {
-    val canEditMarkdown: Boolean
+    val isEditableMarkdown: Boolean
         get() = selected?.file?.isMarkdown() == true && selected.file.capabilities?.canEdit != false
+
+    val canEditMarkdown: Boolean
+        get() = isEditableMarkdown && validationState == ValidationState.Ready
 }
 
 enum class SaveState { Saved, Pending, Saving, Failed }
+enum class ValidationState { Ready, Checking, Failed }
 
 class OpenGDriveViewModel(application: Application) : AndroidViewModel(application) {
     var state = mutableStateOf(EditorState())
@@ -48,10 +56,12 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
 
     private val driveApi = DriveApi()
     private val localStore = LocalMarkdownStore(File(application.filesDir, "markdown-documents"))
+    private val previewCache = PreviewCacheStore(File(application.cacheDir, "file-previews"))
     private val folderCache = FolderFileCache()
     private val syncJobs = mutableMapOf<String, Job>()
     private val syncingDrafts = mutableSetOf<String>()
     private var localSaveJob: Job? = null
+    private var openJob: Job? = null
     private var activeDraft: LocalMarkdownDocument? = null
     private var accessToken: String? = null
 
@@ -71,6 +81,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun createMarkdown() {
+        openJob?.cancel()
         viewModelScope.launch {
             flushLocalSave()
             val current = state.value
@@ -85,6 +96,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                 markdown = "",
                 editMode = true,
                 previewPaneVisible = true,
+                validationState = ValidationState.Ready,
                 saveState = SaveState.Pending,
                 fileSyncStates = current.fileSyncStates + (file.id to SaveState.Pending),
                 message = null,
@@ -127,6 +139,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
     fun navigateToPath(index: Int) {
         val current = state.value
         if (index !in current.folderPath.indices || index == current.folderPath.lastIndex) return
+        openJob?.cancel()
         viewModelScope.launch {
             flushLocalSave()
             val newPath = current.folderPath.take(index + 1)
@@ -137,6 +150,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                 markdown = "",
                 editMode = false,
                 saveState = SaveState.Saved,
+                validationState = ValidationState.Ready,
             )
             loadFolder(newPath.last())
         }
@@ -144,7 +158,13 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
 
     fun open(file: DriveFile) {
         val token = accessToken ?: return
-        viewModelScope.launch {
+        openJob?.cancel()
+        state.value = state.value.copy(
+            editMode = false,
+            validationState = ValidationState.Checking,
+            message = null,
+        )
+        openJob = viewModelScope.launch {
             flushLocalSave()
             val local = withContext(Dispatchers.IO) {
                 if (file.id.startsWith(LOCAL_FILE_PREFIX)) {
@@ -153,7 +173,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                     localStore.findByDriveId(file.id)
                 }
             }
-            if (local?.dirty == true || file.id.startsWith(LOCAL_FILE_PREFIX)) {
+            if (file.id.startsWith(LOCAL_FILE_PREFIX)) {
                 activeDraft = local
                 val localFile = local!!.asDriveFile()
                 state.value = state.value.copy(
@@ -162,28 +182,94 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                     loading = false,
                     editMode = false,
                     saveState = local.saveState(),
+                    validationState = ValidationState.Ready,
                     message = null,
                 )
                 return@launch
             }
 
+            if (local?.dirty == true) {
+                activeDraft = local
+                val localOpened = OpenDriveFile(
+                    local.asDriveFile().copy(
+                        modifiedTime = file.modifiedTime,
+                        webViewLink = file.webViewLink,
+                    ),
+                    PreviewData.Markdown(local.content),
+                    local.etag,
+                )
+                state.value = state.value.copy(
+                    selected = localOpened,
+                    markdown = local.content,
+                    loading = false,
+                    editMode = false,
+                    saveState = local.saveState(),
+                    validationState = ValidationState.Checking,
+                    message = null,
+                )
+                try {
+                    val metadata = driveApi.getMetadata(file.id, token)
+                    if (metadata.matches(localOpened)) {
+                        state.value = state.value.copy(
+                            selected = localOpened.copy(
+                                file = metadata.file,
+                                etag = metadata.etag ?: localOpened.etag,
+                            ),
+                            validationState = ValidationState.Ready,
+                        )
+                    } else {
+                        state.value = state.value.copy(
+                            validationState = ValidationState.Failed,
+                            message = "Drive has a newer revision; the local draft was preserved and editing is locked",
+                        )
+                    }
+                } catch (error: Throwable) {
+                    handleCachedValidationError(error)
+                }
+                return@launch
+            }
+
             activeDraft = null
-            state.value = state.value.copy(loading = true, editMode = false, message = null)
+            val cached = withContext(Dispatchers.IO) { previewCache.find(file.id) }
+                ?: local?.let {
+                    OpenDriveFile(it.asDriveFile(), PreviewData.Markdown(it.content), it.etag)
+                }
+            if (cached != null) {
+                activeDraft = local
+                state.value = state.value.copy(
+                    selected = cached,
+                    markdown = (cached.preview as? PreviewData.Markdown)?.text.orEmpty(),
+                    loading = false,
+                    editMode = false,
+                    saveState = local?.saveState() ?: SaveState.Saved,
+                    validationState = ValidationState.Checking,
+                    message = null,
+                )
+                try {
+                    val metadata = driveApi.getMetadata(file.id, token)
+                    val opened = if (metadata.matches(cached)) {
+                        cached.copy(file = metadata.file, etag = metadata.etag ?: cached.etag)
+                    } else {
+                        driveApi.open(metadata.file, token)
+                    }
+                    applyOpenedFile(opened)
+                } catch (error: Throwable) {
+                    handleCachedValidationError(error)
+                }
+                return@launch
+            }
+
+            state.value = state.value.copy(
+                selected = null,
+                markdown = "",
+                loading = true,
+                editMode = false,
+                validationState = ValidationState.Checking,
+                message = null,
+            )
             try {
                 val opened = driveApi.open(file, token)
-                val markdown = opened.preview as? PreviewData.Markdown
-                if (markdown != null) {
-                    val cached = withContext(Dispatchers.IO) {
-                        localStore.cacheRemote(file, state.value.folderPath.last().id, markdown.text, opened.etag)
-                    }
-                    activeDraft = cached
-                }
-                state.value = state.value.copy(
-                    selected = opened,
-                    markdown = markdown?.text.orEmpty(),
-                    loading = false,
-                    saveState = SaveState.Saved,
-                )
+                applyOpenedFile(opened)
             } catch (error: Throwable) {
                 if (local != null) {
                     activeDraft = local
@@ -193,6 +279,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                         markdown = local.content,
                         loading = false,
                         saveState = local.saveState(),
+                        validationState = ValidationState.Failed,
                         message = "Showing the local copy; Drive is unavailable",
                     )
                 } else {
@@ -254,6 +341,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun navigateInto(folder: DriveFile) {
+        openJob?.cancel()
         viewModelScope.launch {
             flushLocalSave()
             val destination = DriveFolder(folder.id, folder.name)
@@ -264,6 +352,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                 markdown = "",
                 editMode = false,
                 saveState = SaveState.Saved,
+                validationState = ValidationState.Ready,
             )
             loadFolder(destination)
         }
@@ -306,6 +395,41 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
             fileSyncStates = syncStates,
             loading = false,
             message = null,
+        )
+    }
+
+    private suspend fun applyOpenedFile(opened: OpenDriveFile) {
+        withContext(Dispatchers.IO) { previewCache.put(opened) }
+        val markdown = opened.preview as? PreviewData.Markdown
+        if (markdown != null) {
+            activeDraft = withContext(Dispatchers.IO) {
+                localStore.cacheRemote(
+                    opened.file,
+                    state.value.folderPath.last().id,
+                    markdown.text,
+                    opened.etag,
+                )
+            }
+        } else {
+            activeDraft = null
+        }
+        state.value = state.value.copy(
+            selected = opened,
+            markdown = markdown?.text.orEmpty(),
+            loading = false,
+            saveState = SaveState.Saved,
+            validationState = ValidationState.Ready,
+            message = null,
+        )
+    }
+
+    private fun handleCachedValidationError(error: Throwable) {
+        if (error is DriveException.Unauthorized) accessToken = null
+        state.value = state.value.copy(
+            authorized = accessToken != null,
+            loading = false,
+            validationState = ValidationState.Failed,
+            message = "Showing cached content; Drive verification failed, so editing is disabled",
         )
     }
 
@@ -375,7 +499,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
             } ?: return
             syncingDrafts -= localId
             folderCache.clear()
-            onDocumentSynced(snapshot, saved)
+            onDocumentSynced(snapshot, saved, opened.file)
             if (saved.dirty) scheduleSync(saved.localId, AUTOSAVE_INTERVAL_MS)
         } catch (error: Throwable) {
             syncingDrafts -= localId
@@ -386,9 +510,16 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    private fun onDocumentSynced(before: LocalMarkdownDocument, saved: LocalMarkdownDocument) {
+    private fun onDocumentSynced(
+        before: LocalMarkdownDocument,
+        saved: LocalMarkdownDocument,
+        remoteFile: DriveFile,
+    ) {
         val oldId = before.displayId()
-        val newFile = saved.asDriveFile()
+        val newFile = saved.asDriveFile().copy(
+            modifiedTime = remoteFile.modifiedTime ?: Instant.now().toString(),
+            webViewLink = remoteFile.webViewLink,
+        )
         val status = saved.saveState()
         val current = state.value
         val selected = current.selected?.let { opened ->
@@ -399,6 +530,8 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
         if (activeDraft?.localId == saved.localId) activeDraft = saved
+        val cachedOpened = OpenDriveFile(newFile, PreviewData.Markdown(saved.content), saved.etag)
+        viewModelScope.launch(Dispatchers.IO) { previewCache.put(cachedOpened) }
         state.value = current.copy(
             files = sortFiles(current.files.map { if (it.id == oldId) newFile else it }),
             selected = selected,
@@ -429,6 +562,11 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
         state.value = state.value.copy(
             authorized = accessToken != null,
             loading = false,
+            validationState = if (state.value.validationState == ValidationState.Checking) {
+                ValidationState.Failed
+            } else {
+                state.value.validationState
+            },
             message = error.message ?: "Google Drive request failed",
         )
     }
@@ -472,4 +610,5 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
             return if (trimmed.endsWith(".md", ignoreCase = true)) trimmed else "$trimmed.md"
         }
     }
+
 }

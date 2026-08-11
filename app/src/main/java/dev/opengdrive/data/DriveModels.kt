@@ -28,6 +28,16 @@ data class OpenDriveFile(
     val etag: String?,
 )
 
+data class DriveMetadata(
+    val file: DriveFile,
+    val etag: String?,
+)
+
+internal fun DriveMetadata.matches(cached: OpenDriveFile): Boolean {
+    if (etag != null && cached.etag != null) return etag == cached.etag
+    return file.modifiedTime == cached.file.modifiedTime && file.size == cached.file.size
+}
+
 sealed interface PreviewData {
     data class Markdown(val text: String) : PreviewData
     data class Text(val text: String, val formatLabel: String) : PreviewData

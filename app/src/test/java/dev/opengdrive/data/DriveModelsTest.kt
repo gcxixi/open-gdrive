@@ -6,6 +6,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DriveModelsTest {
+    @Test fun `metadata comparison prefers etag and falls back to modification data`() {
+        val cachedFile = DriveFile("1", "notes.md", modifiedTime = "time-1", size = "10")
+        val cached = OpenDriveFile(cachedFile, PreviewData.Markdown("cached"), "etag-1")
+
+        assertTrue(DriveMetadata(cachedFile.copy(name = "renamed.md"), "etag-1").matches(cached))
+        assertFalse(DriveMetadata(cachedFile, "etag-2").matches(cached))
+        assertTrue(DriveMetadata(cachedFile, null).matches(cached.copy(etag = null)))
+        assertFalse(
+            DriveMetadata(cachedFile.copy(modifiedTime = "time-2"), null).matches(cached.copy(etag = null)),
+        )
+    }
+
     @Test fun `markdown extension is case insensitive`() {
         assertTrue(DriveFile("1", "notes.md").isMarkdown())
         assertTrue(DriveFile("2", "README.MD").isMarkdown())

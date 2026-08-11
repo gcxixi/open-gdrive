@@ -126,6 +126,11 @@ import io.noties.markwon.syntax.Prism4jThemeDefault
 import io.noties.markwon.syntax.SyntaxHighlightPlugin
 import io.noties.prism4j.Prism4j
 import java.io.File
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -462,16 +467,26 @@ private fun PreviewPane(
                 Column(Modifier.weight(1f)) {
                     Text(selected.file.name, style = MaterialTheme.typography.titleMedium, maxLines = 1)
                     Text(
-                        fileTypeLabel(selected.file),
+                        lastChangedLabel(selected.file),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (state.canEditMarkdown && !state.editMode) {
-                    FilledTonalButton(onClick = onToggleEdit) {
-                        Icon(Icons.Default.Edit, null, Modifier.size(18.dp))
+                if (state.isEditableMarkdown && !state.editMode) {
+                    FilledTonalButton(onClick = onToggleEdit, enabled = state.canEditMarkdown) {
+                        if (state.validationState == ValidationState.Checking) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.Edit, null, Modifier.size(18.dp))
+                        }
                         Spacer(Modifier.width(8.dp))
-                        Text("Edit")
+                        Text(
+                            when (state.validationState) {
+                                ValidationState.Ready -> "Edit"
+                                ValidationState.Checking -> "Checking"
+                                ValidationState.Failed -> "Edit locked"
+                            },
+                        )
                     }
                 }
             }
@@ -483,6 +498,18 @@ private fun PreviewPane(
             PreviewContent(livePreview, selected.file.webViewLink, Modifier.fillMaxSize())
         }
     }
+}
+
+private fun lastChangedLabel(file: DriveFile): String {
+    if (file.modifiedTime == null) {
+        return if (file.id.startsWith("local:")) "Not synced yet" else "Last changed time unavailable"
+    }
+    val formatted = runCatching {
+        DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
+            .withLocale(Locale.getDefault())
+            .format(Instant.parse(file.modifiedTime).atZone(ZoneId.systemDefault()))
+    }.getOrNull() ?: file.modifiedTime
+    return "Last changed $formatted"
 }
 
 @Composable

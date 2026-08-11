@@ -12,6 +12,7 @@ Open GDrive is a tablet-first Android 16 app. Google Drive is the source of trut
 6. Markdown editing is local-first. Content and filename changes are atomically persisted in app-private storage before a Drive request is scheduled.
 7. A dirty local revision is uploaded after five seconds or immediately on explicit save. `If-Match` prevents silently replacing a remotely changed file when Drive supplies an ETag.
 8. New documents begin as `untitled-N.md` local drafts. A multipart Drive upload later creates metadata and content together; a successful response binds the stable local ID to the new Drive file ID.
+9. Reopening a file is cache-first. The last preview is rendered immediately while a lightweight Drive metadata request validates its ETag, or its modified time and size when no ETag is available. A changed revision is downloaded and rendered only after that comparison.
 
 ## Preview routing
 
@@ -22,6 +23,10 @@ Open GDrive is a tablet-first Android 16 app. Google Drive is the source of trut
 - Unsupported binary formats remain visible in the file browser and can be opened in Google Drive through `webViewLink`.
 
 Preview downloads are capped at 25 MB to avoid loading an unexpectedly large Drive file into the app process.
+
+Downloaded Markdown, text, image, and PDF previews are stored in the app-private cache directory. Entries are keyed by a SHA-256 digest of the Drive file ID and capped at 128 files using least-recently-used metadata timestamps. Android may reclaim this cache at any time. Cache loss only causes the next open to download the preview again.
+
+When a cached Markdown preview is selected, the preview becomes visible immediately but editing stays locked during remote revision validation. If the ETag matches, the existing bytes remain on screen and editing unlocks. If it differs, Drive content replaces the cached preview before editing unlocks. If validation fails, the cached preview remains readable and editing stays locked to avoid overwriting an unseen remote revision.
 
 Drive list responses use an explicit streaming JSON parser. They do not rely on reflected Kotlin model names, so R8 minification cannot silently turn a successful Release response into an empty file list.
 
@@ -35,7 +40,7 @@ The UI treats this local record as the editable source of truth. Every text or f
 
 New files use a multipart Drive upload, which creates the filename, `text/markdown` MIME type, parent, application-local identifier, and Markdown content in one request. Existing files upload content with ETag conflict protection and then synchronize the filename. A failed create, upload, or rename leaves the local record dirty, displays `Sync issue`, and can retry on explicit save or after the next authorization. Because OAuth access tokens are deliberately memory-only, synchronization cannot continue after process death; the persisted dirty records resume when the app obtains authorization again.
 
-Google Workspace and Markdown rows use local Simple Icons brand vectors, while the remaining file types use Material icons. Every glyph is rendered at 20dp inside the same 24dp slot, so the list stays aligned and works fully offline.
+Google Workspace and Markdown rows use local Simple Icons brand vectors, while the remaining file types use Material icons. Every glyph is rendered at 18dp inside the same 28dp pale circular container, so the list stays aligned and works fully offline.
 
 The token is deliberately held in memory only. After process death or a 401 response, the app requests authorization again; Google can satisfy an existing grant without showing consent every time.
 

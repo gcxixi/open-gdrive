@@ -7,6 +7,7 @@ An Android 16, tablet-first Markdown editor that uses Google Drive as its storag
 - Browses all files and folders in Google Drive.
 - Creates new Markdown files immediately as local drafts, then creates the matching Drive file asynchronously.
 - Reuses folder listings from a five-minute in-memory cache; manual refresh always bypasses it.
+- Opens previously viewed files from an app-private preview cache immediately, then validates the cached revision against Drive asynchronously. ETag is preferred, with modified time and size as fallback.
 - Previews Markdown with fenced-code syntax highlighting, plus text/code, JSON, CSV, images, PDFs, Google Docs, Sheets, Slides, and Drawings.
 - Uses a clean file-list + preview layout by default.
 - Uses compact single-line file rows with consistently sized Simple Icons brand vectors for Google Workspace and Markdown.
@@ -15,6 +16,7 @@ An Android 16, tablet-first Markdown editor that uses Google Drive as its storag
 - Persists edits and renames to app-private local storage first, then syncs changed Markdown to Drive after five seconds or on explicit save.
 - Keeps unsynced drafts across process restarts and surfaces a compact red sync warning when Drive synchronization fails.
 - Optimistic conflict protection when Drive returns an ETag.
+- Keeps cached Markdown read-only until Drive revision validation finishes; failed validation never silently unlocks editing.
 - Signed APK releases produced only by GitHub Actions.
 
 ## Google Cloud setup
