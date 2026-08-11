@@ -13,29 +13,16 @@ An Android 16, tablet-first Markdown editor that uses Google Drive as its storag
 
 ## Google Cloud setup
 
-The source builds without secrets, but Drive authorization requires an OAuth configuration tied to the APK signing certificate.
+Drive authorization requires a Google Cloud project whose Android OAuth client matches both the package name and the certificate that signed the installed APK.
 
-1. Create or select a project in Google Cloud Console.
-2. Enable **Google Drive API**.
-3. Configure the OAuth consent screen and add the Drive scope `https://www.googleapis.com/auth/drive`.
-4. Create an **Android OAuth client** with package name `dev.opengdrive`.
-5. Add the SHA-1 fingerprint of the certificate used to sign the installed APK.
+Quick reference:
 
-For local debug builds, obtain the fingerprint with:
+- Package name: `dev.opengdrive`
+- OAuth scope: `https://www.googleapis.com/auth/drive`
+- Release certificate SHA-1: `C9:9F:66:48:3A:5F:F3:CE:5E:F6:89:A8:FF:71:E0:57:16:F5:CA:32`
+- No `google-services.json`, embedded client ID, or Android client secret is required.
 
-```sh
-./gradlew signingReport
-```
-
-For GitHub releases, use the SHA-1 of the private release keystore stored in repository Actions secrets.
-
-Current release certificate SHA-1:
-
-```text
-C9:9F:66:48:3A:5F:F3:CE:5E:F6:89:A8:FF:71:E0:57:16:F5:CA:32
-```
-
-The local backup is stored outside the repository at `~/Library/Application Support/open-gdrive/signing/open-gdrive-release.jks`; its password is in macOS Keychain under `open-gdrive-release-keystore`.
+Follow the complete Chinese guide in [docs/GOOGLE_DRIVE_SETUP.md](docs/GOOGLE_DRIVE_SETUP.md). It covers Google Cloud project creation, Drive API enablement, consent-screen configuration, test users, debug and release certificates, production verification, GitHub signing secrets, and troubleshooting.
 
 ## Build
 
@@ -58,7 +45,7 @@ The `Release Android APK` workflow accepts a semantic version and Android versio
 
 It tests, builds a signed minified APK, creates a `vX.Y.Z` tag, and publishes the APK as a GitHub Release asset.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design decisions and next steps.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design decisions and [docs/GOOGLE_DRIVE_SETUP.md](docs/GOOGLE_DRIVE_SETUP.md) for the complete configuration guide.
 
 ## License
 
