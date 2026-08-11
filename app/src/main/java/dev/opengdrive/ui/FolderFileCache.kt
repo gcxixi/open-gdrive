@@ -23,6 +23,10 @@ internal class FolderFileCache(
         entries[folderId] = Entry(files.toList(), now())
     }
 
+    fun clear() {
+        entries.clear()
+    }
+
     companion object {
         const val DEFAULT_TTL_MILLIS = 5 * 60 * 1_000L
     }

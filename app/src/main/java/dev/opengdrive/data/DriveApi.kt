@@ -10,6 +10,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okio.Buffer
+import java.util.UUID
 
 class DriveApi(
     private val client: OkHttpClient = OkHttpClient(),
@@ -69,6 +70,57 @@ class DriveApi(
             response.header("ETag")
         }
     }
+
+    suspend fun createMarkdown(
+        name: String,
+        parentId: String,
+        markdown: String,
+        localId: String,
+        accessToken: String,
+    ): OpenDriveFile = withContext(Dispatchers.IO) {
+        val boundary = "open-gdrive-${UUID.randomUUID()}"
+        val metadata = createMetadataJson(name, parentId, localId)
+        val multipart = buildString {
+            append("--$boundary\r\n")
+            append("Content-Type: application/json; charset=UTF-8\r\n\r\n")
+            append(metadata)
+            append("\r\n--$boundary\r\n")
+            append("Content-Type: text/markdown; charset=UTF-8\r\n\r\n")
+            append(markdown)
+            append("\r\n--$boundary--\r\n")
+        }
+        val url = "https://www.googleapis.com/upload/drive/v3/files".toHttpUrl().newBuilder()
+            .addQueryParameter("uploadType", "multipart")
+            .addQueryParameter(
+                "fields",
+                "id,name,mimeType,modifiedTime,size,webViewLink,capabilities(canEdit,canDownload)",
+            )
+            .build()
+        client.newCall(
+            authorizedRequest(url.toString(), accessToken)
+                .post(multipart.toRequestBody("multipart/related; boundary=$boundary".toMediaType()))
+                .build(),
+        ).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            ensureSuccessful(response.code, body)
+            val file = parseDriveFileJson(body)
+                ?: throw DriveException.Http(response.code, "Drive returned no file metadata")
+            OpenDriveFile(file, PreviewData.Markdown(markdown), response.header("ETag"))
+        }
+    }
+
+    suspend fun rename(fileId: String, name: String, accessToken: String): String? =
+        withContext(Dispatchers.IO) {
+            val url = "https://www.googleapis.com/drive/v3/files/$fileId".toHttpUrl().newBuilder()
+                .addQueryParameter("fields", "id,name")
+                .build()
+            val body = "{\"name\":${jsonString(name)}}".toRequestBody(JSON_MEDIA_TYPE)
+            client.newCall(authorizedRequest(url.toString(), accessToken).patch(body).build()).execute().use { response ->
+                val responseBody = response.body?.string().orEmpty()
+                ensureSuccessful(response.code, responseBody)
+                response.header("ETag")
+            }
+        }
 
     private fun fetchPreview(
         file: DriveFile,
@@ -139,6 +191,11 @@ class DriveApi(
             return DriveFilePage(files, nextPageToken)
         }
 
+        internal fun parseDriveFileJson(json: String): DriveFile? {
+            val reader = JsonReader.of(Buffer().writeUtf8(json))
+            return parseDriveFile(reader)
+        }
+
         private fun parseDriveFile(reader: JsonReader): DriveFile? {
             var id: String? = null
             var name: String? = null
@@ -192,8 +249,46 @@ class DriveApi(
             return "trashed = false and '$escaped' in parents"
         }
 
+        internal fun createMetadataJson(name: String, parentId: String, localId: String): String = buildString {
+            append("{\"name\":")
+            append(jsonString(name))
+            append(",\"mimeType\":\"text/markdown\"")
+            append(",\"appProperties\":{\"openGDriveLocalId\":")
+            append(jsonString(localId))
+            append('}')
+            if (parentId != "all") {
+                append(",\"parents\":[")
+                append(jsonString(parentId))
+                append(']')
+            }
+            append('}')
+        }
+
+        private fun jsonString(value: String): String = buildString {
+            append('"')
+            value.forEach { character ->
+                when (character) {
+                    '"' -> append("\\\"")
+                    '\\' -> append("\\\\")
+                    '\b' -> append("\\b")
+                    '\u000C' -> append("\\f")
+                    '\n' -> append("\\n")
+                    '\r' -> append("\\r")
+                    '\t' -> append("\\t")
+                    else -> if (character.code < 0x20) {
+                        append("\\u")
+                        append(character.code.toString(16).padStart(4, '0'))
+                    } else {
+                        append(character)
+                    }
+                }
+            }
+            append('"')
+        }
+
         private const val MAX_PREVIEW_MB = 25
         private const val MAX_PREVIEW_BYTES = MAX_PREVIEW_MB * 1024 * 1024L
         private val MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8".toMediaType()
+        private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }

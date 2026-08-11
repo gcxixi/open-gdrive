@@ -40,13 +40,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CloudDone
-import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Image
@@ -59,12 +62,15 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Slideshow
 import androidx.compose.material.icons.filled.TableChart
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -154,6 +160,8 @@ fun OpenGDriveApp(viewModel: OpenGDriveViewModel, onAuthorize: () -> Unit) {
                     onEdit = viewModel::edit,
                     onToggleEdit = viewModel::toggleEditMode,
                     onSave = viewModel::save,
+                    onCreate = viewModel::createMarkdown,
+                    onRename = viewModel::renameMarkdown,
                 )
             }
             if (state.loading) {
@@ -187,7 +195,7 @@ private fun CompactHeader(
             Text("Open GDrive", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.weight(1f))
             if (state.authorized) {
-                if (state.editMode) SaveIndicator(state.saveState)
+                if (state.editMode || state.saveState != SaveState.Saved) SaveIndicator(state.saveState)
                 if (state.selected != null) {
                     IconButton(onClick = onToggleFilePane) {
                         Icon(
@@ -244,6 +252,8 @@ private fun Workspace(
     onEdit: (String) -> Unit,
     onToggleEdit: () -> Unit,
     onSave: () -> Unit,
+    onCreate: () -> Unit,
+    onRename: (String) -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= 840.dp) {
@@ -256,18 +266,20 @@ private fun Workspace(
                         files = state.files,
                         path = state.folderPath,
                         selectedId = state.selected?.file?.id,
+                        syncStates = state.fileSyncStates,
                         onSelect = onSelect,
                         onPathClick = onPathClick,
+                        onCreate = onCreate,
                         modifier = Modifier.width(if (state.editMode) 300.dp else 340.dp),
                     )
                 }
                 if (state.editMode) {
-                    EditorPane(state, onEdit, onToggleEdit, onSave, Modifier.weight(1f))
+                    EditorPane(state, onEdit, onToggleEdit, onSave, onRename, Modifier.weight(1f))
                 }
-                PreviewPane(state, onToggleEdit, Modifier.weight(1f))
+                PreviewPane(state, onToggleEdit, onRename, Modifier.weight(1f))
             }
         } else {
-            CompactWorkspace(state, onSelect, onPathClick, onEdit, onToggleEdit, onSave)
+            CompactWorkspace(state, onSelect, onPathClick, onEdit, onToggleEdit, onSave, onCreate, onRename)
         }
     }
 }
@@ -277,8 +289,10 @@ private fun FilePane(
     files: List<DriveFile>,
     path: List<DriveFolder>,
     selectedId: String?,
+    syncStates: Map<String, SaveState>,
     onSelect: (DriveFile) -> Unit,
     onPathClick: (Int) -> Unit,
+    onCreate: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -288,7 +302,7 @@ private fun FilePane(
         modifier = modifier.fillMaxHeight(),
     ) {
         Column {
-            Breadcrumbs(path, onPathClick)
+            Breadcrumbs(path, onPathClick, onCreate)
             if (files.isEmpty()) {
                 Column(
                     Modifier.fillMaxSize().padding(28.dp),
@@ -307,7 +321,7 @@ private fun FilePane(
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(files, key = { it.id }) { file ->
-                        FileRow(file, file.id == selectedId, onSelect)
+                        FileRow(file, file.id == selectedId, syncStates[file.id], onSelect)
                     }
                 }
             }
@@ -316,9 +330,19 @@ private fun FilePane(
 }
 
 @Composable
-private fun Breadcrumbs(path: List<DriveFolder>, onPathClick: (Int) -> Unit) {
+private fun Breadcrumbs(path: List<DriveFolder>, onPathClick: (Int) -> Unit, onCreate: () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
-        Text("FILES", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "FILES",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onCreate, modifier = Modifier.size(30.dp)) {
+                Icon(Icons.Default.Add, contentDescription = "New Markdown", modifier = Modifier.size(18.dp))
+            }
+        }
         Spacer(Modifier.height(4.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (path.size > 1) {
@@ -347,7 +371,12 @@ private fun Breadcrumbs(path: List<DriveFolder>, onPathClick: (Int) -> Unit) {
 }
 
 @Composable
-private fun FileRow(file: DriveFile, selected: Boolean, onSelect: (DriveFile) -> Unit) {
+private fun FileRow(
+    file: DriveFile,
+    selected: Boolean,
+    syncState: SaveState?,
+    onSelect: (DriveFile) -> Unit,
+) {
     val background = if (selected) MaterialTheme.colorScheme.primaryContainer
     else MaterialTheme.colorScheme.surface
     Row(
@@ -375,12 +404,32 @@ private fun FileRow(file: DriveFile, selected: Boolean, onSelect: (DriveFile) ->
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(end = 10.dp).size(17.dp),
             )
+        } else if (syncState == SaveState.Failed) {
+            Row(
+                modifier = Modifier.padding(end = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Default.ErrorOutline,
+                    contentDescription = "Sync issue",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text("Sync issue", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+            }
         }
     }
 }
 
 @Composable
-private fun PreviewPane(state: EditorState, onToggleEdit: () -> Unit, modifier: Modifier = Modifier) {
+private fun PreviewPane(
+    state: EditorState,
+    onToggleEdit: () -> Unit,
+    onRename: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var showRename by remember(state.selected?.file?.id) { mutableStateOf(false) }
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(20.dp),
@@ -405,6 +454,11 @@ private fun PreviewPane(state: EditorState, onToggleEdit: () -> Unit, modifier: 
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                if (state.canEditMarkdown) {
+                    IconButton(onClick = { showRename = true }) {
+                        Icon(Icons.Default.DriveFileRenameOutline, contentDescription = "Rename Markdown")
+                    }
+                }
                 if (state.canEditMarkdown && !state.editMode) {
                     FilledTonalButton(onClick = onToggleEdit) {
                         Icon(Icons.Default.Edit, null, Modifier.size(18.dp))
@@ -421,6 +475,16 @@ private fun PreviewPane(state: EditorState, onToggleEdit: () -> Unit, modifier: 
             PreviewContent(livePreview, selected.file.webViewLink, Modifier.fillMaxSize())
         }
     }
+    if (showRename) {
+        RenameDialog(
+            currentName = state.selected?.file?.name.orEmpty(),
+            onDismiss = { showRename = false },
+            onConfirm = {
+                onRename(it)
+                showRename = false
+            },
+        )
+    }
 }
 
 @Composable
@@ -429,8 +493,10 @@ private fun EditorPane(
     onEdit: (String) -> Unit,
     onToggleEdit: () -> Unit,
     onSave: () -> Unit,
+    onRename: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var showRename by remember(state.selected?.file?.id) { mutableStateOf(false) }
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(20.dp),
@@ -442,7 +508,16 @@ private fun EditorPane(
                 Modifier.fillMaxWidth().height(68.dp).padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("Edit Markdown", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text(
+                    state.selected?.file?.name ?: "Edit Markdown",
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = { showRename = true }) {
+                    Icon(Icons.Default.DriveFileRenameOutline, contentDescription = "Rename Markdown")
+                }
                 IconButton(onClick = onSave) { Icon(Icons.Default.Save, contentDescription = "Save now") }
                 TextButton(onClick = onToggleEdit) {
                     Icon(Icons.Default.Check, null, Modifier.size(18.dp))
@@ -470,6 +545,37 @@ private fun EditorPane(
             )
         }
     }
+    if (showRename) {
+        RenameDialog(
+            currentName = state.selected?.file?.name.orEmpty(),
+            onDismiss = { showRename = false },
+            onConfirm = {
+                onRename(it)
+                showRename = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun RenameDialog(currentName: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var name by remember(currentName) { mutableStateOf(currentName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename Markdown") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("File name") },
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(name) }, enabled = name.isNotBlank()) { Text("Rename") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable
@@ -699,6 +805,8 @@ private fun CompactWorkspace(
     onEdit: (String) -> Unit,
     onToggleEdit: () -> Unit,
     onSave: () -> Unit,
+    onCreate: () -> Unit,
+    onRename: (String) -> Unit,
 ) {
     var showFiles by remember(state.folderPath) { mutableStateOf(state.selected == null) }
     if (showFiles || state.selected == null) {
@@ -706,11 +814,16 @@ private fun CompactWorkspace(
             files = state.files,
             path = state.folderPath,
             selectedId = state.selected?.file?.id,
+            syncStates = state.fileSyncStates,
             onSelect = {
                 onSelect(it)
                 if (!it.isFolder()) showFiles = false
             },
             onPathClick = onPathClick,
+            onCreate = {
+                onCreate()
+                showFiles = false
+            },
             modifier = Modifier.fillMaxSize(),
         )
     } else {
@@ -721,9 +834,9 @@ private fun CompactWorkspace(
                 Text("Files")
             }
             if (state.editMode) {
-                EditorPane(state, onEdit, onToggleEdit, onSave, Modifier.weight(1f))
+                EditorPane(state, onEdit, onToggleEdit, onSave, onRename, Modifier.weight(1f))
             } else {
-                PreviewPane(state, onToggleEdit, Modifier.weight(1f))
+                PreviewPane(state, onToggleEdit, onRename, Modifier.weight(1f))
             }
         }
     }
@@ -732,15 +845,17 @@ private fun CompactWorkspace(
 @Composable
 private fun SaveIndicator(saveState: SaveState) {
     val (icon, text) = when (saveState) {
-        SaveState.Saved -> Icons.Default.CloudDone to "Saved"
-        SaveState.Pending -> Icons.Default.Edit to "Autosave in 5s"
-        SaveState.Saving -> Icons.Default.CloudDone to "Saving"
-        SaveState.Failed -> Icons.Default.CloudOff to "Save failed"
+        SaveState.Saved -> Icons.Default.CloudDone to "Synced"
+        SaveState.Pending -> Icons.Default.CloudUpload to "Saved locally"
+        SaveState.Saving -> Icons.Default.Sync to "Syncing"
+        SaveState.Failed -> Icons.Default.ErrorOutline to "Sync issue"
     }
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp)) {
-        Icon(icon, contentDescription = text, modifier = Modifier.size(17.dp))
+        val color = if (saveState == SaveState.Failed) MaterialTheme.colorScheme.error
+        else MaterialTheme.colorScheme.onSurfaceVariant
+        Icon(icon, contentDescription = text, tint = color, modifier = Modifier.size(17.dp))
         Spacer(Modifier.width(5.dp))
-        Text(text, style = MaterialTheme.typography.labelMedium)
+        Text(text, style = MaterialTheme.typography.labelMedium, color = color)
     }
 }
 

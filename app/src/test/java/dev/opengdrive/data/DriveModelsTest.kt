@@ -63,4 +63,15 @@ class DriveModelsTest {
         assertTrue(page.files.last().isMarkdown())
         assertEquals("42", page.files.last().size)
     }
+
+    @Test fun `new markdown metadata escapes names and omits parent for all files view`() {
+        assertEquals(
+            "{\"name\":\"a\\\"b.md\",\"mimeType\":\"text/markdown\"," +
+                "\"appProperties\":{\"openGDriveLocalId\":\"local-1\"}}",
+            DriveApi.createMetadataJson("a\"b.md", "all", "local-1"),
+        )
+        assertTrue(DriveApi.createMetadataJson("notes.md", "folder-1", "local-2").contains(
+            "\"parents\":[\"folder-1\"]",
+        ))
+    }
 }
