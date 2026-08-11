@@ -6,9 +6,20 @@ Open GDrive is a tablet-first Android 16 app. Google Drive is the source of trut
 
 1. `DriveAuthorization` asks Google Identity Services for the full Drive OAuth scope.
 2. `DriveApi` calls Drive REST v3 directly with the short-lived access token.
-3. `OpenGDriveViewModel` owns the current file, editor buffer, and save state.
-4. Compose updates the editor immediately; Markwon renders the same buffer in the adjacent preview.
-5. Edits are uploaded after a one-second debounce. `If-Match` prevents silently replacing a remotely changed file when Drive supplies an ETag.
+3. `OpenGDriveViewModel` owns folder navigation, the current file, editor buffer, and save state.
+4. The default list-detail layout shows a folder/file pane and one preview pane.
+5. Markdown editing is opt-in. Edit mode adds the editor between files and preview; hiding files produces a focused editor/preview layout.
+6. A dirty Markdown buffer is uploaded at most once every five seconds. Unchanged content never produces an upload. `If-Match` prevents silently replacing a remotely changed file when Drive supplies an ETag.
+
+## Preview routing
+
+- Markdown uses Markwon with tables, tasks, links, and strikethrough.
+- Text, source code, JSON, XML, YAML, and CSV use a selectable native text preview.
+- Images are decoded locally; PDFs are rendered page-by-page with Android `PdfRenderer`.
+- Google Docs export to plain text, Sheets to CSV, Slides to PDF, and Drawings to PNG through Drive REST v3.
+- Unsupported binary formats remain visible in the file browser and can be opened in Google Drive through `webViewLink`.
+
+Preview downloads are capped at 25 MB to avoid loading an unexpectedly large Drive file into the app process.
 
 The token is deliberately held in memory only. After process death or a 401 response, the app requests authorization again; Google can satisfy an existing grant without showing consent every time.
 

@@ -2,7 +2,7 @@
 
 本文用于配置 Open GDrive 的 Google Drive 授权，适用于仓库当前的 Android 16 版本。
 
-完成后，应用可以请求用户授权、列出 Google Drive 中已有的 `.md` 文件、读取文件内容并将修改写回原文件。
+完成后，应用可以请求用户授权、浏览 Google Drive 中的全部文件和文件夹、预览常用文件，并将 Markdown 修改写回原文件。
 
 ## 1. 配置前先确认这些值
 
@@ -113,7 +113,7 @@ Google 当前对 Testing 项目设置最多 100 个 test users。个人用途或
 
 `drive.file` 只能访问由本应用创建，或用户通过文件选择器明确交给本应用的文件。Open GDrive 的核心需求是自动发现 Drive 中已经存在的 Markdown 文件，因此当前 MVP 使用完整 Drive scope。
 
-完整 `drive` scope 可以查看和管理用户的所有 Drive 文件，属于 restricted scope。应用自身只查询名称以 `.md` 结尾的文件并读写用户选中的 Markdown，但 Google 的授权页仍会按照完整 scope 展示权限范围。
+完整 `drive` scope 可以查看和管理用户的所有 Drive 文件，属于 restricted scope。应用会列出用户可访问的文件；只有在用户选中文件时才下载预览内容，且当前只允许修改 Markdown。Google 的授权页仍会按照完整 scope 展示权限范围。
 
 如果以后改成“用户逐个选择文件”的产品交互，可以迁移到 Google Picker + `drive.file`，从而显著简化公开验证。
 
@@ -190,7 +190,7 @@ keytool -list -v \
 5. 在 Google Drive 中准备一个普通文本文件，例如 `welcome.md`。Google Docs 原生文档不是 Markdown blob 文件。
 6. 打开 Open GDrive，点击 **Connect Google Drive**。
 7. 选择测试账号，并批准 Drive 权限。
-8. 文件列表应显示 `.md` 文件。选中文件后修改内容，等待顶部状态回到 **Saved**。
+8. 文件列表应显示账号可访问的全部文件。选择 `welcome.md`，点击 **Edit**，修改内容并等待顶部状态回到 **Saved**。
 9. 回到 Google Drive 下载或打开原文件，确认内容已经更新。
 
 应用只把短期 access token 保存在内存中。系统结束进程、token 过期或 Drive 返回 401 后，可能需要再次点击连接；已有授权通常不需要重复显示完整 consent screen。
@@ -293,7 +293,7 @@ workflow 会执行单元测试、构建并签名 minified release APK、创建 G
 
 可使用下面的 scope justification 作为草稿，再按实际产品情况调整：
 
-> Open GDrive is an Android Markdown productivity editor. It lists existing Markdown files across a user's Google Drive, downloads only the file selected in the app, renders and edits it locally on the user's Android device, and uploads the user's edits back to the same Drive file. The narrower drive.file scope cannot discover or access Markdown files that already exist in Drive unless every file is separately opened through a picker. Open GDrive does not transmit Drive file content or OAuth tokens to a developer-operated server.
+> Open GDrive is an Android file browser and Markdown productivity editor. It lists files and folders the user can access in Google Drive, downloads only the file selected for preview, renders supported content locally, and allows Markdown edits to be uploaded back to the same Drive file. The narrower drive.file scope cannot discover or access files that already exist in Drive unless every file is separately opened through a picker. Open GDrive does not transmit Drive file content or OAuth tokens to a developer-operated server.
 
 完整 `drive` scope 属于 restricted scope。Google 官方说明：如果应用把 restricted-scope 数据存储到服务器或传输到服务器，通常还需要安全评估。当前 Open GDrive 直接在 Android 设备和 Google Drive 之间传输内容，没有开发者后端；最终需要哪些验证步骤仍以 Google Auth Platform 提交页面和审核团队的判断为准。
 
@@ -327,13 +327,13 @@ workflow 会执行单元测试、构建并签名 minified release APK、创建 G
 - `admin_policy_enforced`：Google Workspace 管理策略阻止了 scope，需要联系管理员。
 - `rateLimitExceeded`：等待后重试，并检查 Cloud project 的 Drive API quota。
 
-### 登录成功但文件列表为空
+### 登录成功但文件列表为空，或找不到某个文件
 
-1. 确认 Drive 中有名称真正以 `.md` 结尾的普通文件。
-2. `notes.md.bak` 不会显示。
-3. 已进入回收站的文件不会显示。
-4. Google Docs、Sheets、Slides 原生文件不会被当作 Markdown。
-5. 确认授权的是存放目标文件的那个 Google 账号。
+1. 确认授权的是存放目标文件的那个 Google 账号。
+2. 已进入回收站的文件不会显示。
+3. 点击刷新按钮重新获取 Drive 列表。
+4. 打开文件夹时，列表会切换为该文件夹的直接子项；点击顶部返回按钮可回到 All files。
+5. Google Workspace 管理策略可能隐藏或阻止部分共享文件。
 
 ### 创建 client 时提示包名和 SHA-1 已存在
 
