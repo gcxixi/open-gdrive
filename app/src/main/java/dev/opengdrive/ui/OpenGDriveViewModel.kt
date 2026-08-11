@@ -288,7 +288,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
         val represented = merged.map(DriveFile::id).toSet()
         localDocuments
             .filter { it.displayId() !in represented && (it.dirty || it.driveFileId == null) }
-            .mapTo(merged, LocalMarkdownDocument::asDriveFile)
+            .forEach { merged += it.asDriveFile() }
         val syncStates = localDocuments.associate { it.displayId() to it.saveState() }
         state.value = state.value.copy(
             files = sortFiles(merged.distinctBy(DriveFile::id)),
