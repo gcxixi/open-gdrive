@@ -52,6 +52,10 @@ android {
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
 }
 
+configurations.configureEach {
+    exclude(group = "org.jetbrains", module = "annotations-java5")
+}
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     implementation(composeBom)
@@ -70,8 +74,8 @@ dependencies {
     implementation("com.google.android.gms:play-services-auth:21.6.0")
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
     implementation("com.squareup.moshi:moshi:1.15.2")
-    implementation("io.coil-kt.coil3:coil-compose:3.5.0")
-    implementation("io.coil-kt.coil3:coil-network-okhttp:3.5.0")
+    implementation("io.coil-kt.coil3:coil-compose:3.3.0")
+    implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
 
     implementation("io.noties.markwon:core:4.6.2")
     implementation("io.noties.markwon:ext-strikethrough:4.6.2")
