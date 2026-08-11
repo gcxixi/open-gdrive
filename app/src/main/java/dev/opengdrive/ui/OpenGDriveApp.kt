@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -39,6 +40,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CloudDone
@@ -80,6 +82,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
@@ -88,9 +91,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import coil3.compose.AsyncImage
 import dev.opengdrive.data.DriveFile
 import dev.opengdrive.data.DriveFolder
 import dev.opengdrive.data.GOOGLE_DOCUMENT
@@ -100,9 +105,15 @@ import dev.opengdrive.data.PreviewData
 import dev.opengdrive.data.isFolder
 import dev.opengdrive.data.isMarkdown
 import io.noties.markwon.Markwon
+import io.noties.markwon.AbstractMarkwonPlugin
+import io.noties.markwon.core.MarkwonTheme
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.ext.tasklist.TaskListPlugin
+import io.noties.markwon.syntax.Prism4jSyntaxHighlight
+import io.noties.markwon.syntax.Prism4jThemeDarkula
+import io.noties.markwon.syntax.SyntaxHighlightPlugin
+import io.noties.prism4j.Prism4j
 import java.io.File
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -335,7 +346,6 @@ private fun Breadcrumbs(path: List<DriveFolder>, onPathClick: (Int) -> Unit) {
 
 @Composable
 private fun FileRow(file: DriveFile, selected: Boolean, onSelect: (DriveFile) -> Unit) {
-    val icon = fileIcon(file)
     val background = if (selected) MaterialTheme.colorScheme.primaryContainer
     else MaterialTheme.colorScheme.surface
     Row(
@@ -348,13 +358,7 @@ private fun FileRow(file: DriveFile, selected: Boolean, onSelect: (DriveFile) ->
             .clickable { onSelect(file) },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            icon,
-            contentDescription = fileTypeLabel(file),
-            tint = if (file.isFolder() || file.isMarkdown()) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 12.dp).size(20.dp),
-        )
+        FileTypeIcon(file, Modifier.padding(start = 12.dp))
         Text(
             file.name,
             style = MaterialTheme.typography.bodyMedium,
@@ -481,10 +485,26 @@ private fun PreviewContent(preview: PreviewData, webViewLink: String?, modifier:
 private fun MarkdownPreview(markdown: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val markwon = remember(context) {
+        val syntaxHighlight = Prism4jSyntaxHighlight.create(
+            Prism4j(OpenGDriveGrammarLocator()),
+            Prism4jThemeDarkula.create(),
+            "clike",
+        )
         Markwon.builder(context)
             .usePlugin(StrikethroughPlugin.create())
             .usePlugin(TablePlugin.create(context))
             .usePlugin(TaskListPlugin.create(context))
+            .usePlugin(SyntaxHighlightPlugin.create(syntaxHighlight))
+            .usePlugin(object : AbstractMarkwonPlugin() {
+                override fun configureTheme(builder: MarkwonTheme.Builder) {
+                    builder
+                        .codeBackgroundColor(android.graphics.Color.rgb(23, 33, 43))
+                        .codeBlockBackgroundColor(android.graphics.Color.rgb(23, 33, 43))
+                        .codeTextColor(android.graphics.Color.rgb(230, 237, 243))
+                        .codeBlockTextColor(android.graphics.Color.rgb(230, 237, 243))
+                        .codeBlockMargin(18)
+                }
+            })
             .build()
     }
     val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
@@ -718,24 +738,87 @@ private fun SaveIndicator(saveState: SaveState) {
     }
 }
 
-private fun fileIcon(file: DriveFile) = when {
-    file.isFolder() -> Icons.Default.Folder
-    file.isMarkdown() -> Icons.Default.Description
-    file.mimeType.startsWith("image/") -> Icons.Default.Image
-    file.mimeType == "application/pdf" -> Icons.Default.PictureAsPdf
-    file.mimeType.startsWith("audio/") -> Icons.Default.Audiotrack
-    file.mimeType.startsWith("video/") -> Icons.Default.Movie
-    file.mimeType.contains("zip") || file.mimeType.contains("archive") -> Icons.Default.Archive
-    file.mimeType == GOOGLE_DOCUMENT -> Icons.Default.Description
-    file.mimeType == GOOGLE_SPREADSHEET -> Icons.Default.TableChart
-    file.mimeType == GOOGLE_PRESENTATION -> Icons.Default.Slideshow
-    file.mimeType.contains("spreadsheet") || file.mimeType.contains("excel") -> Icons.Default.TableChart
-    file.mimeType.contains("presentation") || file.mimeType.contains("powerpoint") -> Icons.Default.Slideshow
-    file.mimeType.contains("wordprocessing") || file.mimeType.contains("msword") -> Icons.Default.Description
-    file.mimeType.startsWith("text/") || file.name.substringAfterLast('.', "").lowercase() in CODE_EXTENSIONS ->
-        Icons.Default.Code
-    else -> Icons.Default.InsertDriveFile
+@Composable
+private fun FileTypeIcon(file: DriveFile, modifier: Modifier = Modifier) {
+    val localIcon = fileLocalIcon(file)
+    Box(modifier.size(width = 28.dp, height = 22.dp), contentAlignment = Alignment.Center) {
+        when {
+            file.isMarkdown() -> MarkdownFileIcon()
+            else -> Icon(
+                localIcon.icon,
+                contentDescription = fileTypeLabel(file),
+                tint = localIcon.tint,
+                modifier = Modifier.size(21.dp),
+            )
+        }
+        if (file.mimeType in GOOGLE_WORKSPACE_TYPES && !file.iconLink.isNullOrBlank()) {
+            AsyncImage(
+                model = file.iconLink,
+                contentDescription = fileTypeLabel(file),
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.matchParentSize(),
+            )
+        }
+    }
 }
+
+@Composable
+private fun MarkdownFileIcon() {
+    Surface(
+        color = Color(0xFF24292F),
+        shape = RoundedCornerShape(3.dp),
+        modifier = Modifier.size(width = 28.dp, height = 18.dp),
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "MD",
+                color = Color.White,
+                fontSize = 7.sp,
+                fontWeight = FontWeight.Black,
+                lineHeight = 7.sp,
+            )
+            Icon(
+                Icons.Default.ArrowDownward,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(9.dp),
+            )
+        }
+    }
+}
+
+private data class LocalFileIcon(
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val tint: Color,
+)
+
+@Composable
+private fun fileLocalIcon(file: DriveFile): LocalFileIcon = when {
+    file.isFolder() -> LocalFileIcon(Icons.Default.Folder, MaterialTheme.colorScheme.primary)
+    file.mimeType == "application/pdf" -> LocalFileIcon(Icons.Default.PictureAsPdf, Color(0xFFE5252A))
+    file.mimeType == GOOGLE_DOCUMENT -> LocalFileIcon(Icons.Default.Description, Color(0xFF4285F4))
+    file.mimeType == GOOGLE_SPREADSHEET -> LocalFileIcon(Icons.Default.TableChart, Color(0xFF0F9D58))
+    file.mimeType == GOOGLE_PRESENTATION -> LocalFileIcon(Icons.Default.Slideshow, Color(0xFFF4B400))
+    file.mimeType.startsWith("image/") -> LocalFileIcon(Icons.Default.Image, Color(0xFF8E5BB7))
+    file.mimeType.startsWith("audio/") -> LocalFileIcon(Icons.Default.Audiotrack, Color(0xFFDB6D28))
+    file.mimeType.startsWith("video/") -> LocalFileIcon(Icons.Default.Movie, Color(0xFF7E57C2))
+    file.mimeType.contains("zip") || file.mimeType.contains("archive") ->
+        LocalFileIcon(Icons.Default.Archive, Color(0xFF8D6E63))
+    file.mimeType.contains("spreadsheet") || file.mimeType.contains("excel") ->
+        LocalFileIcon(Icons.Default.TableChart, Color(0xFF217346))
+    file.mimeType.contains("presentation") || file.mimeType.contains("powerpoint") ->
+        LocalFileIcon(Icons.Default.Slideshow, Color(0xFFD24726))
+    file.mimeType.contains("wordprocessing") || file.mimeType.contains("msword") ->
+        LocalFileIcon(Icons.Default.Description, Color(0xFF2B579A))
+    file.mimeType.startsWith("text/") || file.name.substringAfterLast('.', "").lowercase() in CODE_EXTENSIONS ->
+        LocalFileIcon(Icons.Default.Code, Color(0xFF397D78))
+    else -> LocalFileIcon(Icons.Default.InsertDriveFile, MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+private val GOOGLE_WORKSPACE_TYPES = setOf(GOOGLE_DOCUMENT, GOOGLE_SPREADSHEET, GOOGLE_PRESENTATION)
 
 private val CODE_EXTENSIONS = setOf(
     "json", "xml", "yaml", "yml", "toml", "kt", "kts", "java", "c", "cpp", "h", "hpp",

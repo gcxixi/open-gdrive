@@ -183,7 +183,7 @@ keytool -list -v \
 3. 安装 APK。使用 ADB 时可运行：
 
    ```sh
-   adb install -r open-gdrive-v0.3.0.apk
+   adb install -r open-gdrive-v0.3.1.apk
    ```
 
 4. 确认用于测试的 Google 账号已经加入 Audience 的 Test users。
@@ -203,7 +203,7 @@ keytool -list -v \
 "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify \
   --verbose \
   --print-certs \
-  open-gdrive-v0.3.0.apk
+  open-gdrive-v0.3.1.apk
 ```
 
 输出中的 signer certificate SHA-1 应为：

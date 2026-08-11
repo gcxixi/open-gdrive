@@ -25,7 +25,7 @@ class DriveApi(
                     .addQueryParameter("pageSize", "100")
                     .addQueryParameter(
                         "fields",
-                        "nextPageToken,files(id,name,mimeType,modifiedTime,size,webViewLink," +
+                        "nextPageToken,files(id,name,mimeType,modifiedTime,size,webViewLink,iconLink," +
                             "capabilities(canEdit,canDownload))",
                     )
                     .addQueryParameter("spaces", "drive")
@@ -146,6 +146,7 @@ class DriveApi(
             var modifiedTime: String? = null
             var size: String? = null
             var webViewLink: String? = null
+            var iconLink: String? = null
             var capabilities: DriveCapabilities? = null
             reader.beginObject()
             while (reader.hasNext()) {
@@ -156,13 +157,14 @@ class DriveApi(
                     "modifiedTime" -> modifiedTime = reader.nextNullableString()
                     "size" -> size = reader.nextNullableString()
                     "webViewLink" -> webViewLink = reader.nextNullableString()
+                    "iconLink" -> iconLink = reader.nextNullableString()
                     "capabilities" -> capabilities = parseCapabilities(reader)
                     else -> reader.skipValue()
                 }
             }
             reader.endObject()
             return if (id != null && name != null) {
-                DriveFile(id, name, mimeType, modifiedTime, size, webViewLink, capabilities)
+                DriveFile(id, name, mimeType, modifiedTime, size, webViewLink, capabilities, iconLink)
             } else {
                 null
             }

@@ -50,7 +50,8 @@ class DriveModelsTest {
                   "name": "hello.md",
                   "mimeType": "text/markdown",
                   "size": "42",
-                  "webViewLink": "https://drive.google.com/file/d/markdown-1/view"
+                  "webViewLink": "https://drive.google.com/file/d/markdown-1/view",
+                  "iconLink": "https://drive-thirdparty.googleusercontent.com/icon"
                 }
               ]
             }
@@ -62,5 +63,6 @@ class DriveModelsTest {
         assertTrue(page.files.first().isFolder())
         assertTrue(page.files.last().isMarkdown())
         assertEquals("42", page.files.last().size)
+        assertEquals("https://drive-thirdparty.googleusercontent.com/icon", page.files.last().iconLink)
     }
 }

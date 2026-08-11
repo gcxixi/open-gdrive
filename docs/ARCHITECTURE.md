@@ -13,7 +13,7 @@ Open GDrive is a tablet-first Android 16 app. Google Drive is the source of trut
 
 ## Preview routing
 
-- Markdown uses Markwon with tables, tasks, links, and strikethrough.
+- Markdown uses Markwon with tables, tasks, links, strikethrough, and Prism4j syntax highlighting for fenced code blocks.
 - Text, source code, JSON, XML, YAML, and CSV use a selectable native text preview.
 - Images are decoded locally; PDFs are rendered page-by-page with Android `PdfRenderer`.
 - Google Docs export to plain text, Sheets to CSV, Slides to PDF, and Drawings to PNG through Drive REST v3.
@@ -24,6 +24,8 @@ Preview downloads are capped at 25 MB to avoid loading an unexpectedly large Dri
 Drive list responses use an explicit streaming JSON parser. They do not rely on reflected Kotlin model names, so R8 minification cannot silently turn a successful Release response into an empty file list.
 
 Folder listings use a five-minute process-memory cache keyed by Drive folder ID. Revisiting a folder avoids a network request while the entry is fresh, and the refresh action always bypasses the cache. The cache is intentionally not written to disk because file names are private Drive metadata and the current authorization flow does not expose a stable account identifier for safely separating multiple accounts.
+
+Drive list requests include the static, unauthenticated `iconLink` metadata. Google Workspace rows use that official icon with a branded-color local fallback; Markdown and PDF use deterministic local icons so their identity remains clear offline.
 
 The token is deliberately held in memory only. After process death or a 401 response, the app requests authorization again; Google can satisfy an existing grant without showing consent every time.
 

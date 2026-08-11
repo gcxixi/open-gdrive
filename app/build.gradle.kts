@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.kapt")
 }
 
 android {
@@ -12,8 +13,8 @@ android {
         applicationId = "dev.opengdrive"
         minSdk = 36
         targetSdk = 36
-        versionCode = providers.gradleProperty("VERSION_CODE").orNull?.toInt() ?: 4
-        versionName = providers.gradleProperty("VERSION_NAME").orNull ?: "0.3.0"
+        versionCode = providers.gradleProperty("VERSION_CODE").orNull?.toInt() ?: 5
+        versionName = providers.gradleProperty("VERSION_NAME").orNull ?: "0.3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -69,11 +70,16 @@ dependencies {
     implementation("com.google.android.gms:play-services-auth:21.6.0")
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
     implementation("com.squareup.moshi:moshi:1.15.2")
+    implementation("io.coil-kt.coil3:coil-compose:3.5.0")
+    implementation("io.coil-kt.coil3:coil-network-okhttp:3.5.0")
 
     implementation("io.noties.markwon:core:4.6.2")
     implementation("io.noties.markwon:ext-strikethrough:4.6.2")
     implementation("io.noties.markwon:ext-tables:4.6.2")
     implementation("io.noties.markwon:ext-tasklist:4.6.2")
+    implementation("io.noties.markwon:syntax-highlight:4.6.2")
+    compileOnly("io.noties:prism4j-bundler:2.0.0")
+    kapt("io.noties:prism4j-bundler:2.0.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }
