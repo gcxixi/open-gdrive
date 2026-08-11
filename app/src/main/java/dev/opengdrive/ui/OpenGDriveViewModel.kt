@@ -230,7 +230,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
             }
 
             activeDraft = null
-            val cached = withContext(Dispatchers.IO) { previewCache.find(file.id) }
+            val cached = withContext(Dispatchers.IO) { previewCache.find(file.id)?.opened }
                 ?: local?.let {
                     OpenDriveFile(it.asDriveFile(), PreviewData.Markdown(it.content), it.etag)
                 }
