@@ -88,7 +88,7 @@ class DriveApi(
         }
         client.newCall(authorizedRequest(base.build().toString(), accessToken).build()).execute().use { response ->
             ensureDownloadSuccessful(response)
-            val bytes = response.body?.bytes().orEmpty()
+            val bytes = response.body?.bytes() ?: ByteArray(0)
             if (bytes.size > MAX_PREVIEW_BYTES) throw DriveException.TooLarge(MAX_PREVIEW_MB)
             val preview = when (kind) {
                 PreviewKind.Markdown -> PreviewData.Markdown(bytes.toString(Charsets.UTF_8))
