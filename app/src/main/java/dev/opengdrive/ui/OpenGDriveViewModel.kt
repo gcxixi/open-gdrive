@@ -33,6 +33,7 @@ data class EditorState(
     val selected: OpenDriveFile? = null,
     val markdown: String = "",
     val loading: Boolean = false,
+    val localSaveState: LocalSaveState = LocalSaveState.Saved,
     val saveState: SaveState = SaveState.Saved,
     val fileSyncStates: Map<String, SaveState> = emptyMap(),
     val editMode: Boolean = false,
@@ -49,6 +50,7 @@ data class EditorState(
 }
 
 enum class SaveState { Saved, Pending, Saving, Failed }
+enum class LocalSaveState { Saved, Saving }
 enum class ValidationState { Ready, Checking, Failed }
 
 class OpenGDriveViewModel(application: Application) : AndroidViewModel(application) {
@@ -60,6 +62,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
     private val previewCache = PreviewCacheStore(File(application.cacheDir, "file-previews"))
     private val folderCache = FolderFileCache()
     private val syncJobs = mutableMapOf<String, Job>()
+    private val syncRetryAttempts = mutableMapOf<String, Int>()
     private val syncingDrafts = mutableSetOf<String>()
     private var localSaveJob: Job? = null
     private var openJob: Job? = null
@@ -98,6 +101,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                 editMode = true,
                 previewPaneVisible = true,
                 validationState = ValidationState.Ready,
+                localSaveState = LocalSaveState.Saved,
                 saveState = SaveState.Pending,
                 fileSyncStates = current.fileSyncStates + (file.id to SaveState.Pending),
                 message = null,
@@ -122,10 +126,12 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
             syncError = null,
         )
         activeDraft = updated
+        syncRetryAttempts.remove(updated.localId)
         val displayId = current.selected?.file?.id ?: updated.displayId()
         state.value = current.copy(
             files = current.files.map { if (it.id == displayId) it.copy(name = normalized) else it },
             selected = current.selected?.let { it.copy(file = it.file.copy(name = normalized)) },
+            localSaveState = LocalSaveState.Saving,
             saveState = SaveState.Pending,
             fileSyncStates = current.fileSyncStates + (displayId to SaveState.Pending),
             message = null,
@@ -206,6 +212,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                 markdown = if (selectedDeleted) "" else current.markdown,
                 loading = false,
                 editMode = if (selectedDeleted) false else current.editMode,
+                localSaveState = if (selectedDeleted) LocalSaveState.Saved else current.localSaveState,
                 saveState = if (selectedDeleted) SaveState.Saved else current.saveState,
                 fileSyncStates = current.fileSyncStates.filterKeys { it !in deletedIds },
                 validationState = if (selectedDeleted) {
@@ -235,6 +242,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                 selected = null,
                 markdown = "",
                 editMode = false,
+                localSaveState = LocalSaveState.Saved,
                 saveState = SaveState.Saved,
                 validationState = ValidationState.Ready,
             )
@@ -267,6 +275,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                     markdown = local.content,
                     loading = false,
                     editMode = false,
+                    localSaveState = LocalSaveState.Saved,
                     saveState = local.saveState(),
                     validationState = ValidationState.Ready,
                     message = null,
@@ -289,6 +298,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                     markdown = local.content,
                     loading = false,
                     editMode = false,
+                    localSaveState = LocalSaveState.Saved,
                     saveState = local.saveState(),
                     validationState = ValidationState.Checking,
                     message = null,
@@ -327,6 +337,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                     markdown = (cached.preview as? PreviewData.Markdown)?.text.orEmpty(),
                     loading = false,
                     editMode = false,
+                    localSaveState = LocalSaveState.Saved,
                     saveState = local?.saveState() ?: SaveState.Saved,
                     validationState = ValidationState.Checking,
                     message = null,
@@ -364,6 +375,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                         selected = OpenDriveFile(localFile, PreviewData.Markdown(local.content), local.etag),
                         markdown = local.content,
                         loading = false,
+                        localSaveState = LocalSaveState.Saved,
                         saveState = local.saveState(),
                         validationState = ValidationState.Failed,
                         message = "Showing the local copy; Drive is unavailable",
@@ -406,13 +418,15 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
             syncError = null,
         )
         activeDraft = updated
+        syncRetryAttempts.remove(updated.localId)
         val displayId = current.selected?.file?.id ?: updated.displayId()
         state.value = current.copy(
             markdown = markdown,
+            localSaveState = LocalSaveState.Saving,
             saveState = SaveState.Pending,
             fileSyncStates = current.fileSyncStates + (displayId to SaveState.Pending),
         )
-        persistAndSchedule(updated, AUTOSAVE_INTERVAL_MS)
+        persistAndSchedule(updated, REMOTE_SYNC_IDLE_MS)
     }
 
     fun save() {
@@ -437,6 +451,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                 selected = null,
                 markdown = "",
                 editMode = false,
+                localSaveState = LocalSaveState.Saved,
                 saveState = SaveState.Saved,
                 validationState = ValidationState.Ready,
             )
@@ -503,6 +518,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
             selected = opened,
             markdown = markdown?.text.orEmpty(),
             loading = false,
+            localSaveState = LocalSaveState.Saved,
             saveState = SaveState.Saved,
             validationState = ValidationState.Ready,
             message = null,
@@ -523,7 +539,8 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
         localSaveJob?.cancel()
         localSaveJob = viewModelScope.launch {
             delay(LOCAL_SAVE_DEBOUNCE_MS)
-            withContext(Dispatchers.IO) { localStore.save(document) }
+            val saved = withContext(Dispatchers.IO) { localStore.save(document) }
+            markLocalSaved(saved)
             localSaveJob = null
             scheduleSync(document.localId, syncDelay)
         }
@@ -533,7 +550,8 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
         localSaveJob?.cancel()
         localSaveJob = null
         val document = activeDraft ?: return
-        withContext(Dispatchers.IO) { localStore.save(document) }
+        val saved = withContext(Dispatchers.IO) { localStore.save(document) }
+        markLocalSaved(saved)
         if (document.dirty) scheduleSync(document.localId, 0)
     }
 
@@ -543,19 +561,21 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
         lateinit var job: Job
         job = viewModelScope.launch {
             delay(delayMillis)
+            var retryDelay: Long? = null
             try {
-                syncDocument(localId)
+                retryDelay = syncDocument(localId)
             } finally {
                 if (syncJobs[localId] === job) syncJobs.remove(localId)
             }
+            retryDelay?.let { scheduleSync(localId, it) }
         }
         syncJobs[localId] = job
     }
 
-    private suspend fun syncDocument(localId: String) {
-        val token = accessToken ?: return
-        val snapshot = withContext(Dispatchers.IO) { localStore.find(localId) } ?: return
-        if (!snapshot.dirty) return
+    private suspend fun syncDocument(localId: String): Long? {
+        val token = accessToken ?: return null
+        val snapshot = withContext(Dispatchers.IO) { localStore.find(localId) } ?: return null
+        if (!snapshot.dirty) return null
         syncingDrafts += localId
         updateDocumentStatus(snapshot, SaveState.Saving)
         try {
@@ -587,24 +607,46 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                     opened.file.id,
                     opened.etag,
                 )
-            } ?: return
+            } ?: return null
             syncingDrafts -= localId
+            syncRetryAttempts.remove(localId)
             folderCache.clear()
             onDocumentSynced(snapshot, saved, opened.file)
             if (saved.dirty) {
                 syncJobs.remove(localId)
-                scheduleSync(saved.localId, AUTOSAVE_INTERVAL_MS)
+                scheduleSync(saved.localId, REMOTE_SYNC_IDLE_MS)
             }
+            return null
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
             val message = error.message ?: "Google Drive sync failed"
             val failed = withContext(Dispatchers.IO) { localStore.markFailed(localId, message) } ?: snapshot
             if (error is DriveException.Unauthorized) accessToken = null
-            updateDocumentStatus(failed, SaveState.Failed, "Sync issue: $message")
+            updateDocumentStatus(failed, SaveState.Failed)
+            return nextRetryDelay(localId, error)
         } finally {
             syncingDrafts -= localId
         }
+    }
+
+    private fun markLocalSaved(document: LocalMarkdownDocument) {
+        val active = activeDraft ?: return
+        if (active.localId != document.localId || active.revision != document.revision) return
+        state.value = state.value.copy(localSaveState = LocalSaveState.Saved)
+    }
+
+    private fun nextRetryDelay(localId: String, error: Throwable): Long? {
+        val retryable = when (error) {
+            is DriveException.Unauthorized, is DriveException.Conflict -> false
+            is DriveException.Http -> error.code >= 500 || error.code == 429
+            else -> true
+        }
+        if (!retryable) return null
+        val attempt = (syncRetryAttempts[localId] ?: 0) + 1
+        syncRetryAttempts[localId] = attempt
+        val multiplier = 1L shl minOf(attempt - 1, 5)
+        return minOf(SYNC_RETRY_BASE_MS * multiplier, SYNC_RETRY_MAX_MS)
     }
 
     private fun onDocumentSynced(
@@ -690,8 +732,10 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
     )
 
     companion object {
-        const val AUTOSAVE_INTERVAL_MS = 5_000L
-        private const val LOCAL_SAVE_DEBOUNCE_MS = 150L
+        const val REMOTE_SYNC_IDLE_MS = 30_000L
+        private const val LOCAL_SAVE_DEBOUNCE_MS = 750L
+        private const val SYNC_RETRY_BASE_MS = 10_000L
+        private const val SYNC_RETRY_MAX_MS = 5 * 60_000L
         private const val LOCAL_FILE_PREFIX = "local:"
 
         internal fun nextUntitledName(existingNames: List<String>): String {

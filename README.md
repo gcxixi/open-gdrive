@@ -13,7 +13,10 @@ An Android 16, tablet-first Markdown editor that uses Google Drive as its storag
 - Uses compact single-line file rows with consistently sized Simple Icons brand vectors for Google Workspace and Markdown.
 - Enters a three-pane file/editor/preview workspace only while editing Markdown; the file pane can be collapsed.
 - Lets tablet editors hide the file list and preview independently for a distraction-free full-width editor.
-- Persists edits and renames to app-private local storage first, then syncs changed Markdown to Drive after five seconds or on explicit save.
+- Uses the Sora editing engine so large Markdown files do not re-layout or copy the entire document on every keystroke.
+- Persists edits and renames to app-private local storage first, then syncs changed Markdown to Drive after 30 seconds of editing inactivity or on explicit save.
+- Debounces real-time preview by document size and parses Markdown plus fenced-code highlighting off the UI thread.
+- Keeps local-save and Drive-sync states separate; transient network failures never block editing and retry with capped exponential backoff.
 - Keeps unsynced drafts across process restarts and surfaces a compact red sync warning when Drive synchronization fails.
 - Optimistic conflict protection when Drive returns an ETag.
 - Keeps cached Markdown read-only until Drive revision validation finishes; failed validation never silently unlocks editing.
@@ -56,6 +59,10 @@ It tests, builds a signed minified APK, creates a `vX.Y.Z` tag, and publishes th
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design decisions and [docs/GOOGLE_DRIVE_SETUP.md](docs/GOOGLE_DRIVE_SETUP.md) for the complete configuration guide.
 
+Release changes are recorded in [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
 MIT License.
+
+The APK includes [Sora Editor](https://github.com/Rosemoe/sora-editor), licensed under LGPL-2.1-or-later. Open GDrive's complete corresponding source and reproducible Gradle configuration are provided in this repository.

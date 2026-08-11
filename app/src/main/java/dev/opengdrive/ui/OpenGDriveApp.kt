@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
+import android.text.Spanned
 import android.text.method.LinkMovementMethod
 import android.widget.TextView
 import androidx.compose.animation.AnimatedVisibility
@@ -40,7 +41,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
@@ -104,7 +104,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
@@ -148,6 +147,7 @@ import java.time.format.FormatStyle
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -333,14 +333,18 @@ private fun FloatingWorkspaceToolbar(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(9.dp),
             ) {
-                if (state.editMode || state.saveState != SaveState.Saved) {
+                if (
+                    state.editMode ||
+                    state.localSaveState != LocalSaveState.Saved ||
+                    state.saveState != SaveState.Saved
+                ) {
                     Surface(
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
                         shape = CircleShape,
                         tonalElevation = 3.dp,
                         shadowElevation = 8.dp,
                     ) {
-                        SaveIndicator(state.saveState)
+                        SaveIndicator(state.localSaveState, state.saveState)
                     }
                 }
                 if (state.selected != null) {
@@ -389,7 +393,11 @@ private fun FloatingWorkspaceToolbar(
                         modifier = Modifier.size(21.dp),
                     )
                 }
-                SaveStateBadge(state.saveState, Modifier.align(Alignment.TopEnd).padding(3.dp))
+                SaveStateBadge(
+                    state.localSaveState,
+                    state.saveState,
+                    Modifier.align(Alignment.TopEnd).padding(3.dp),
+                )
             }
         }
     }
@@ -416,13 +424,17 @@ private fun FloatingToolbarButton(
 }
 
 @Composable
-private fun SaveStateBadge(saveState: SaveState, modifier: Modifier = Modifier) {
-    if (saveState == SaveState.Saved) return
-    val color = when (saveState) {
-        SaveState.Failed -> MaterialTheme.colorScheme.error
-        SaveState.Pending -> MaterialTheme.colorScheme.tertiary
-        SaveState.Saving -> MaterialTheme.colorScheme.primary
-        SaveState.Saved -> Color.Transparent
+private fun SaveStateBadge(
+    localSaveState: LocalSaveState,
+    saveState: SaveState,
+    modifier: Modifier = Modifier,
+) {
+    if (localSaveState == LocalSaveState.Saved && saveState == SaveState.Saved) return
+    val color = when {
+        saveState == SaveState.Failed -> MaterialTheme.colorScheme.error
+        localSaveState == LocalSaveState.Saving || saveState == SaveState.Saving -> MaterialTheme.colorScheme.primary
+        saveState == SaveState.Pending -> MaterialTheme.colorScheme.tertiary
+        else -> Color.Transparent
     }
     Box(modifier.size(9.dp).clip(CircleShape).background(color))
 }
@@ -842,6 +854,13 @@ private fun EditorPane(
     modifier: Modifier = Modifier,
 ) {
     var showRename by remember(state.selected?.file?.id) { mutableStateOf(false) }
+    val documentId = state.selected?.file?.id ?: "editor"
+    val editorController = remember(documentId) { MarkdownEditorController() }
+    val editorBackground = MaterialTheme.colorScheme.surface
+    val editorText = MaterialTheme.colorScheme.onSurface
+    val editorSecondaryText = MaterialTheme.colorScheme.onSurfaceVariant
+    val editorCursor = MaterialTheme.colorScheme.primary
+    val editorSelection = MaterialTheme.colorScheme.primaryContainer
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(20.dp),
@@ -866,30 +885,32 @@ private fun EditorPane(
                 IconButton(onClick = { showRename = true }) {
                     Icon(Icons.Default.DriveFileRenameOutline, contentDescription = "Rename Markdown")
                 }
-                IconButton(onClick = onSave) { Icon(Icons.Default.Save, contentDescription = "Save now") }
-                TextButton(onClick = onToggleEdit) {
+                IconButton(
+                    onClick = {
+                        editorController.flush(onEdit)
+                        onSave()
+                    },
+                ) { Icon(Icons.Default.Save, contentDescription = "Save now") }
+                TextButton(onClick = {
+                    editorController.flush(onEdit)
+                    onToggleEdit()
+                }) {
                     Icon(Icons.Default.Check, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Done")
                 }
             }
-            BasicTextField(
-                value = state.markdown,
-                onValueChange = onEdit,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                    color = MaterialTheme.colorScheme.onSurface,
-                    lineHeight = 25.sp,
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 18.dp),
-                decorationBox = { inner ->
-                    Box(Modifier.fillMaxSize()) {
-                        if (state.markdown.isEmpty()) {
-                            Text("Start writing…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        inner()
-                    }
-                },
+            MarkdownCodeEditor(
+                documentId = documentId,
+                initialText = state.markdown,
+                controller = editorController,
+                onSnapshot = onEdit,
+                backgroundColor = editorBackground,
+                textColor = editorText,
+                secondaryTextColor = editorSecondaryText,
+                cursorColor = editorCursor,
+                selectionColor = editorSelection,
+                modifier = Modifier.fillMaxSize(),
             )
         }
     }
@@ -968,6 +989,13 @@ private fun MarkdownPreview(markdown: String, modifier: Modifier = Modifier) {
             .build()
     }
     val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
+    val renderedMarkdown by produceState<Spanned?>(initialValue = null, markwon, markdown) {
+        delay(markdownPreviewDelay(markdown.length))
+        value = withContext(Dispatchers.Default) {
+            val source = markdown.ifBlank { "*Empty document*" }
+            markwon.render(markwon.parse(source))
+        }
+    }
     Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = 28.dp, vertical = 22.dp)) {
         AndroidView(
             factory = {
@@ -981,11 +1009,19 @@ private fun MarkdownPreview(markdown: String, modifier: Modifier = Modifier) {
             },
             update = { view ->
                 view.setTextColor(textColor)
-                markwon.setMarkdown(view, markdown.ifBlank { "*Empty document*" })
+                renderedMarkdown?.let { rendered ->
+                    if (view.text !== rendered) markwon.setParsedMarkdown(view, rendered)
+                }
             },
             modifier = Modifier.fillMaxWidth(),
         )
     }
+}
+
+private fun markdownPreviewDelay(length: Int): Long = when {
+    length >= 1_000_000 -> 1_500L
+    length >= 250_000 -> 800L
+    else -> 250L
 }
 
 @Composable
@@ -1208,8 +1244,10 @@ private fun CompactWorkspace(
 }
 
 @Composable
-private fun SaveIndicator(saveState: SaveState) {
-    val (icon, text) = when (saveState) {
+private fun SaveIndicator(localSaveState: LocalSaveState, saveState: SaveState) {
+    val (icon, text) = if (localSaveState == LocalSaveState.Saving) {
+        Icons.Default.Save to "Saving locally"
+    } else when (saveState) {
         SaveState.Saved -> Icons.Default.CloudDone to "Synced"
         SaveState.Pending -> Icons.Default.CloudUpload to "Saved locally"
         SaveState.Saving -> Icons.Default.Sync to "Syncing"
@@ -1219,8 +1257,9 @@ private fun SaveIndicator(saveState: SaveState) {
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
     ) {
-        val color = if (saveState == SaveState.Failed) MaterialTheme.colorScheme.error
-        else MaterialTheme.colorScheme.onSurfaceVariant
+        val color = if (localSaveState == LocalSaveState.Saved && saveState == SaveState.Failed) {
+            MaterialTheme.colorScheme.error
+        } else MaterialTheme.colorScheme.onSurfaceVariant
         Icon(icon, contentDescription = text, tint = color, modifier = Modifier.size(17.dp))
         Spacer(Modifier.width(5.dp))
         Text(text, style = MaterialTheme.typography.labelMedium, color = color)

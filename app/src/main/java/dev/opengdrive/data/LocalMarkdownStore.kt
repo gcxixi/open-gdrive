@@ -54,8 +54,10 @@ class LocalMarkdownStore(private val directory: File) {
     }
 
     fun save(document: LocalMarkdownDocument): LocalMarkdownDocument = synchronized(lock) {
-        val current = loadLocked(document.localId)
-        if (current != null && current.revision > document.revision) return@synchronized current
+        val currentRevision = readMetadataLocked(document.localId)?.getProperty("revision")?.toLongOrNull()
+        if (currentRevision != null && currentRevision > document.revision) {
+            return@synchronized loadLocked(document.localId) ?: document
+        }
         write(document)
         document
     }
@@ -116,10 +118,8 @@ class LocalMarkdownStore(private val directory: File) {
             .firstOrNull { it.driveFileId == driveFileId }
 
     private fun loadLocked(localId: String): LocalMarkdownDocument? {
-        val metadataFile = metadataFile(localId)
-        if (!metadataFile.isFile) return null
+        val properties = readMetadataLocked(localId) ?: return null
         return runCatching {
-            val properties = Properties().apply { metadataFile.inputStream().use(::load) }
             LocalMarkdownDocument(
                 localId = localId,
                 driveFileId = properties.getProperty("driveFileId")?.takeIf(String::isNotBlank),
@@ -134,8 +134,15 @@ class LocalMarkdownStore(private val directory: File) {
         }.getOrNull()
     }
 
+    private fun readMetadataLocked(localId: String): Properties? {
+        val metadataFile = metadataFile(localId)
+        if (!metadataFile.isFile) return null
+        return runCatching { Properties().apply { metadataFile.inputStream().use(::load) } }.getOrNull()
+    }
+
     private fun write(document: LocalMarkdownDocument) {
-        writeMetadata(document.copy(dirty = true))
+        val wasDirty = readMetadataLocked(document.localId)?.getProperty("dirty")?.toBoolean() == true
+        if (!wasDirty) writeMetadata(document.copy(dirty = true))
         writeAtomic(contentFile(document.localId), document.content.toByteArray(Charsets.UTF_8))
         writeMetadata(document)
     }
