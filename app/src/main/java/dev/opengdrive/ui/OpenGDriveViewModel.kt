@@ -39,6 +39,7 @@ class OpenGDriveViewModel(private val driveApi: DriveApi = DriveApi()) : ViewMod
 
     private var accessToken: String? = null
     private var saveJob: Job? = null
+    private val folderCache = FolderFileCache()
 
     fun onAuthorized(token: String) {
         accessToken = token
@@ -51,7 +52,7 @@ class OpenGDriveViewModel(private val driveApi: DriveApi = DriveApi()) : ViewMod
     }
 
     fun refresh() {
-        loadFolder(state.value.folderPath.last())
+        loadFolder(state.value.folderPath.last(), forceRefresh = true)
     }
 
     fun select(item: DriveFile) {
@@ -135,12 +136,21 @@ class OpenGDriveViewModel(private val driveApi: DriveApi = DriveApi()) : ViewMod
         }
     }
 
-    private fun loadFolder(folder: DriveFolder) {
+    private fun loadFolder(folder: DriveFolder, forceRefresh: Boolean = false) {
         val token = accessToken ?: return
+        if (!forceRefresh) {
+            folderCache.get(folder.id)?.let { cachedFiles ->
+                state.value = state.value.copy(files = cachedFiles, loading = false, message = null)
+                return
+            }
+        }
         viewModelScope.launch {
-            state.value = state.value.copy(loading = true, message = null)
+            state.value = state.value.copy(files = emptyList(), loading = true, message = null)
             runCatching { driveApi.listFiles(token, folder.id) }
-                .onSuccess { files -> state.value = state.value.copy(files = files, loading = false) }
+                .onSuccess { files ->
+                    folderCache.put(folder.id, files)
+                    state.value = state.value.copy(files = files, loading = false)
+                }
                 .onFailure(::handleError)
         }
     }

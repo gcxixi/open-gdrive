@@ -23,6 +23,8 @@ Preview downloads are capped at 25 MB to avoid loading an unexpectedly large Dri
 
 Drive list responses use an explicit streaming JSON parser. They do not rely on reflected Kotlin model names, so R8 minification cannot silently turn a successful Release response into an empty file list.
 
+Folder listings use a five-minute process-memory cache keyed by Drive folder ID. Revisiting a folder avoids a network request while the entry is fresh, and the refresh action always bypasses the cache. The cache is intentionally not written to disk because file names are private Drive metadata and the current authorization flow does not expose a stable account identifier for safely separating multiple accounts.
+
 The token is deliberately held in memory only. After process death or a 401 response, the app requests authorization again; Google can satisfy an existing grant without showing consent every time.
 
 ## Why Markwon

@@ -19,9 +19,13 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -34,6 +38,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
@@ -45,6 +51,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MenuOpen
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Refresh
@@ -53,11 +60,9 @@ import androidx.compose.material.icons.filled.Slideshow
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -65,8 +70,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -105,7 +108,6 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OpenGDriveApp(viewModel: OpenGDriveViewModel, onAuthorize: () -> Unit) {
     val state by viewModel.state
@@ -121,40 +123,10 @@ fun OpenGDriveApp(viewModel: OpenGDriveViewModel, onAuthorize: () -> Unit) {
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                ),
-                title = {
-                    Column {
-                        Text("Open GDrive", style = MaterialTheme.typography.titleLarge)
-                        if (state.authorized) {
-                            Text(
-                                state.selected?.file?.name ?: state.folderPath.last().name,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    if (state.authorized) {
-                        if (state.editMode) SaveIndicator(state.saveState)
-                        if (state.selected != null) {
-                            IconButton(onClick = viewModel::toggleFilePane) {
-                                Icon(
-                                    if (state.filePaneVisible) Icons.Default.MenuOpen else Icons.Default.FolderOpen,
-                                    contentDescription = if (state.filePaneVisible) "Hide file list" else "Show file list",
-                                )
-                            }
-                        }
-                        IconButton(onClick = viewModel::refresh) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Refresh files")
-                        }
-                    }
-                },
+            CompactHeader(
+                state = state,
+                onToggleFilePane = viewModel::toggleFilePane,
+                onRefresh = viewModel::refresh,
             )
         },
     ) { padding ->
@@ -178,6 +150,41 @@ fun OpenGDriveApp(viewModel: OpenGDriveViewModel, onAuthorize: () -> Unit) {
                     modifier = Modifier.align(Alignment.Center),
                 ) {
                     CircularProgressIndicator(Modifier.padding(20.dp).size(30.dp), strokeWidth = 3.dp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactHeader(
+    state: EditorState,
+    onToggleFilePane: () -> Unit,
+    onRefresh: () -> Unit,
+) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .height(48.dp)
+                .padding(start = 18.dp, end = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Open GDrive", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.weight(1f))
+            if (state.authorized) {
+                if (state.editMode) SaveIndicator(state.saveState)
+                if (state.selected != null) {
+                    IconButton(onClick = onToggleFilePane) {
+                        Icon(
+                            if (state.filePaneVisible) Icons.Default.MenuOpen else Icons.Default.FolderOpen,
+                            contentDescription = if (state.filePaneVisible) "Hide file list" else "Show file list",
+                        )
+                    }
+                }
+                IconButton(onClick = onRefresh) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Refresh files")
                 }
             }
         }
@@ -331,33 +338,39 @@ private fun FileRow(file: DriveFile, selected: Boolean, onSelect: (DriveFile) ->
     val icon = fileIcon(file)
     val background = if (selected) MaterialTheme.colorScheme.primaryContainer
     else MaterialTheme.colorScheme.surface
-    ListItem(
-        leadingContent = {
-            Surface(
-                color = if (file.isFolder()) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.surfaceContainerHighest,
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.size(38.dp),
-            ) {
-                Icon(icon, null, Modifier.padding(9.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        },
-        headlineContent = {
-            Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        },
-        supportingContent = {
-            Text(fileTypeLabel(file), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        },
-        trailingContent = {
-            if (file.isFolder()) Icon(Icons.Default.ChevronRight, null, Modifier.size(18.dp))
-        },
-        colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = background),
+    Row(
         modifier = Modifier
             .padding(horizontal = 8.dp, vertical = 2.dp)
             .fillMaxWidth()
+            .heightIn(min = 42.dp)
             .clip(RoundedCornerShape(12.dp))
+            .background(background)
             .clickable { onSelect(file) },
-    )
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            icon,
+            contentDescription = fileTypeLabel(file),
+            tint = if (file.isFolder() || file.isMarkdown()) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 12.dp).size(20.dp),
+        )
+        Text(
+            file.name,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(horizontal = 10.dp, vertical = 9.dp),
+        )
+        if (file.isFolder()) {
+            Icon(
+                Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 10.dp).size(17.dp),
+            )
+        }
+    }
 }
 
 @Composable
@@ -710,12 +723,25 @@ private fun fileIcon(file: DriveFile) = when {
     file.isMarkdown() -> Icons.Default.Description
     file.mimeType.startsWith("image/") -> Icons.Default.Image
     file.mimeType == "application/pdf" -> Icons.Default.PictureAsPdf
+    file.mimeType.startsWith("audio/") -> Icons.Default.Audiotrack
+    file.mimeType.startsWith("video/") -> Icons.Default.Movie
+    file.mimeType.contains("zip") || file.mimeType.contains("archive") -> Icons.Default.Archive
     file.mimeType == GOOGLE_DOCUMENT -> Icons.Default.Description
     file.mimeType == GOOGLE_SPREADSHEET -> Icons.Default.TableChart
     file.mimeType == GOOGLE_PRESENTATION -> Icons.Default.Slideshow
-    file.mimeType.startsWith("text/") -> Icons.Default.Code
+    file.mimeType.contains("spreadsheet") || file.mimeType.contains("excel") -> Icons.Default.TableChart
+    file.mimeType.contains("presentation") || file.mimeType.contains("powerpoint") -> Icons.Default.Slideshow
+    file.mimeType.contains("wordprocessing") || file.mimeType.contains("msword") -> Icons.Default.Description
+    file.mimeType.startsWith("text/") || file.name.substringAfterLast('.', "").lowercase() in CODE_EXTENSIONS ->
+        Icons.Default.Code
     else -> Icons.Default.InsertDriveFile
 }
+
+private val CODE_EXTENSIONS = setOf(
+    "json", "xml", "yaml", "yml", "toml", "kt", "kts", "java", "c", "cpp", "h", "hpp",
+    "cs", "go", "rs", "py", "rb", "php", "js", "jsx", "ts", "tsx", "css", "scss", "html",
+    "sh", "zsh", "bash", "sql", "graphql", "proto",
+)
 
 private fun fileTypeLabel(file: DriveFile): String = when {
     file.isFolder() -> "Folder"
