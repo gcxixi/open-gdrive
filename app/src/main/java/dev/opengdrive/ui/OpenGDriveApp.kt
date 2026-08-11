@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -110,7 +109,6 @@ import io.noties.markwon.core.MarkwonTheme
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.ext.tasklist.TaskListPlugin
-import io.noties.markwon.syntax.Prism4jSyntaxHighlight
 import io.noties.markwon.syntax.Prism4jThemeDarkula
 import io.noties.markwon.syntax.SyntaxHighlightPlugin
 import io.noties.prism4j.Prism4j
@@ -485,16 +483,12 @@ private fun PreviewContent(preview: PreviewData, webViewLink: String?, modifier:
 private fun MarkdownPreview(markdown: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val markwon = remember(context) {
-        val syntaxHighlight = Prism4jSyntaxHighlight.create(
-            Prism4j(OpenGDriveGrammarLocator()),
-            Prism4jThemeDarkula.create(),
-            "clike",
-        )
+        val prism4j = Prism4j(OpenGDriveGrammarLocator())
         Markwon.builder(context)
             .usePlugin(StrikethroughPlugin.create())
             .usePlugin(TablePlugin.create(context))
             .usePlugin(TaskListPlugin.create(context))
-            .usePlugin(SyntaxHighlightPlugin.create(syntaxHighlight))
+            .usePlugin(SyntaxHighlightPlugin.create(prism4j, Prism4jThemeDarkula.create(), "clike"))
             .usePlugin(object : AbstractMarkwonPlugin() {
                 override fun configureTheme(builder: MarkwonTheme.Builder) {
                     builder
@@ -756,7 +750,7 @@ private fun FileTypeIcon(file: DriveFile, modifier: Modifier = Modifier) {
                 model = file.iconLink,
                 contentDescription = fileTypeLabel(file),
                 contentScale = ContentScale.Fit,
-                modifier = Modifier.matchParentSize(),
+                modifier = Modifier.fillMaxSize(),
             )
         }
     }
