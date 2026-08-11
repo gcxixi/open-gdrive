@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
@@ -54,7 +55,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -66,7 +66,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.VerticalDivider
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -118,9 +118,13 @@ fun OpenGDriveApp(viewModel: OpenGDriveViewModel, onAuthorize: () -> Unit) {
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                ),
                 title = {
                     Column {
                         Text("Open GDrive", style = MaterialTheme.typography.titleLarge)
@@ -223,7 +227,10 @@ private fun Workspace(
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= 840.dp) {
-            Row(Modifier.fillMaxSize()) {
+            Row(
+                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer).padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 if (state.filePaneVisible || state.selected == null) {
                     FilePane(
                         files = state.files,
@@ -233,11 +240,9 @@ private fun Workspace(
                         onPathClick = onPathClick,
                         modifier = Modifier.width(if (state.editMode) 300.dp else 340.dp),
                     )
-                    VerticalDivider()
                 }
                 if (state.editMode) {
                     EditorPane(state, onEdit, onToggleEdit, onSave, Modifier.weight(1f))
-                    VerticalDivider()
                 }
                 PreviewPane(state, onToggleEdit, Modifier.weight(1f))
             }
@@ -256,10 +261,14 @@ private fun FilePane(
     onPathClick: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = modifier.fillMaxHeight()) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(20.dp),
+        tonalElevation = 1.dp,
+        modifier = modifier.fillMaxHeight(),
+    ) {
         Column {
             Breadcrumbs(path, onPathClick)
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
             if (files.isEmpty()) {
                 Column(
                     Modifier.fillMaxSize().padding(28.dp),
@@ -320,8 +329,8 @@ private fun Breadcrumbs(path: List<DriveFolder>, onPathClick: (Int) -> Unit) {
 @Composable
 private fun FileRow(file: DriveFile, selected: Boolean, onSelect: (DriveFile) -> Unit) {
     val icon = fileIcon(file)
-    val background = if (selected) MaterialTheme.colorScheme.secondaryContainer
-    else MaterialTheme.colorScheme.surfaceContainerLow
+    val background = if (selected) MaterialTheme.colorScheme.primaryContainer
+    else MaterialTheme.colorScheme.surface
     ListItem(
         leadingContent = {
             Surface(
@@ -343,45 +352,55 @@ private fun FileRow(file: DriveFile, selected: Boolean, onSelect: (DriveFile) ->
             if (file.isFolder()) Icon(Icons.Default.ChevronRight, null, Modifier.size(18.dp))
         },
         colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = background),
-        modifier = Modifier.fillMaxWidth().clickable { onSelect(file) },
+        modifier = Modifier
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onSelect(file) },
     )
 }
 
 @Composable
 private fun PreviewPane(state: EditorState, onToggleEdit: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxHeight().background(MaterialTheme.colorScheme.surface)) {
-        val selected = state.selected
-        if (selected == null) {
-            EmptyPreview()
-            return@Column
-        }
-        Row(
-            Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(selected.file.name, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                Text(
-                    fileTypeLabel(selected.file),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(20.dp),
+        tonalElevation = 1.dp,
+        modifier = modifier.fillMaxHeight(),
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            val selected = state.selected
+            if (selected == null) {
+                EmptyPreview()
+                return@Column
             }
-            if (state.canEditMarkdown && !state.editMode) {
-                FilledTonalButton(onClick = onToggleEdit) {
-                    Icon(Icons.Default.Edit, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Edit")
+            Row(
+                Modifier.fillMaxWidth().height(68.dp).padding(horizontal = 22.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(selected.file.name, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                    Text(
+                        fileTypeLabel(selected.file),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (state.canEditMarkdown && !state.editMode) {
+                    FilledTonalButton(onClick = onToggleEdit) {
+                        Icon(Icons.Default.Edit, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Edit")
+                    }
                 }
             }
+            val livePreview = if (state.editMode && selected.file.isMarkdown()) {
+                PreviewData.Markdown(state.markdown)
+            } else {
+                selected.preview
+            }
+            PreviewContent(livePreview, selected.file.webViewLink, Modifier.fillMaxSize())
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
-        val livePreview = if (state.editMode && selected.file.isMarkdown()) {
-            PreviewData.Markdown(state.markdown)
-        } else {
-            selected.preview
-        }
-        PreviewContent(livePreview, selected.file.webViewLink, Modifier.fillMaxSize())
     }
 }
 
@@ -393,38 +412,44 @@ private fun EditorPane(
     onSave: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLowest)) {
-        Row(
-            Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Edit Markdown", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            IconButton(onClick = onSave) { Icon(Icons.Default.Save, contentDescription = "Save now") }
-            TextButton(onClick = onToggleEdit) {
-                Icon(Icons.Default.Check, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Done")
-            }
-        }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
-        BasicTextField(
-            value = state.markdown,
-            onValueChange = onEdit,
-            textStyle = MaterialTheme.typography.bodyLarge.copy(
-                color = MaterialTheme.colorScheme.onSurface,
-                lineHeight = 25.sp,
-            ),
-            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-            modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 18.dp),
-            decorationBox = { inner ->
-                Box(Modifier.fillMaxSize()) {
-                    if (state.markdown.isEmpty()) {
-                        Text("Start writing…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    inner()
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(20.dp),
+        tonalElevation = 1.dp,
+        modifier = modifier.fillMaxHeight(),
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                Modifier.fillMaxWidth().height(68.dp).padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Edit Markdown", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                IconButton(onClick = onSave) { Icon(Icons.Default.Save, contentDescription = "Save now") }
+                TextButton(onClick = onToggleEdit) {
+                    Icon(Icons.Default.Check, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Done")
                 }
-            },
-        )
+            }
+            BasicTextField(
+                value = state.markdown,
+                onValueChange = onEdit,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                    color = MaterialTheme.colorScheme.onSurface,
+                    lineHeight = 25.sp,
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 18.dp),
+                decorationBox = { inner ->
+                    Box(Modifier.fillMaxSize()) {
+                        if (state.markdown.isEmpty()) {
+                            Text("Start writing…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        inner()
+                    }
+                },
+            )
+        }
     }
 }
 

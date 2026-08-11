@@ -11,18 +11,41 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF315C49),
+    primary = Color(0xFF2F684C),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFB5F1CB),
-    secondary = Color(0xFF52635A),
-    background = Color(0xFFF8FAF5),
-    surface = Color(0xFFF8FAF5),
+    primaryContainer = Color(0xFFC5EAD3),
+    onPrimaryContainer = Color(0xFF123824),
+    secondary = Color(0xFF52655A),
+    secondaryContainer = Color(0xFFD8E8DE),
+    background = Color(0xFFF2F5F2),
+    surface = Color(0xFFFAFCF9),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFF1F4F1),
+    surfaceContainer = Color(0xFFE9EDE9),
+    surfaceContainerHigh = Color(0xFFE2E7E2),
+    surfaceContainerHighest = Color(0xFFDAE1DB),
+    onSurface = Color(0xFF1A1C1A),
+    onSurfaceVariant = Color(0xFF424843),
+    outline = Color(0xFF727A73),
+    outlineVariant = Color(0xFFC2C9C3),
 )
 
 private val DarkColors = darkColorScheme(
     primary = Color(0xFF99D5B0),
     primaryContainer = Color(0xFF194633),
     secondary = Color(0xFFB9CCC0),
+    secondaryContainer = Color(0xFF354B40),
+    background = Color(0xFF111411),
+    surface = Color(0xFF181C19),
+    surfaceContainerLowest = Color(0xFF0C0F0D),
+    surfaceContainerLow = Color(0xFF1D211E),
+    surfaceContainer = Color(0xFF222623),
+    surfaceContainerHigh = Color(0xFF2C312D),
+    surfaceContainerHighest = Color(0xFF373C38),
+    onSurface = Color(0xFFE1E4E0),
+    onSurfaceVariant = Color(0xFFC1C8C1),
+    outline = Color(0xFF8B938C),
+    outlineVariant = Color(0xFF414842),
 )
 
 private val BaseTypography = androidx.compose.material3.Typography()
