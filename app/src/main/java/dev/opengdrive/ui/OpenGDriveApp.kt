@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -476,11 +477,13 @@ private fun TextPreview(preview: PreviewData.Text, modifier: Modifier = Modifier
             color = MaterialTheme.colorScheme.surfaceContainerLow,
             shape = RoundedCornerShape(8.dp),
         ) {
-            Text(
-                preview.text.ifEmpty { "Empty file" },
-                style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 25.sp),
-                modifier = Modifier.fillMaxWidth().padding(20.dp),
-            )
+            SelectionContainer {
+                Text(
+                    preview.text.ifEmpty { "Empty file" },
+                    style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 25.sp),
+                    modifier = Modifier.fillMaxWidth().padding(20.dp),
+                )
+            }
         }
     }
 }
