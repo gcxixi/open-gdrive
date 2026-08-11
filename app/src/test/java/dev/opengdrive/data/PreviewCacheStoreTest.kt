@@ -58,4 +58,17 @@ class PreviewCacheStoreTest {
         assertEquals("image/png", restored.mimeType)
         assertNull(store.find("missing"))
     }
+
+    @Test fun `removing a preview clears its cache entry`() {
+        val opened = OpenDriveFile(
+            DriveFile("delete-me", "notes.md", "text/markdown"),
+            PreviewData.Markdown("temporary"),
+            "etag",
+        )
+        store.put(opened)
+
+        store.remove(opened.file.id)
+
+        assertNull(store.find(opened.file.id))
+    }
 }

@@ -52,4 +52,12 @@ class LocalMarkdownStoreTest {
         assertFalse(current.dirty)
         assertEquals("etag-2", current.etag)
     }
+
+    @Test fun `deleting a local draft removes content and metadata`() {
+        val created = store.create("discard.md", "all")
+
+        assertTrue(store.delete(created.localId))
+        assertEquals(null, store.find(created.localId))
+        assertFalse(store.delete(created.localId))
+    }
 }

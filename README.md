@@ -17,6 +17,7 @@ An Android 16, tablet-first Markdown editor that uses Google Drive as its storag
 - Keeps unsynced drafts across process restarts and surfaces a compact red sync warning when Drive synchronization fails.
 - Optimistic conflict protection when Drive returns an ETag.
 - Keeps cached Markdown read-only until Drive revision validation finishes; failed validation never silently unlocks editing.
+- Reveals a delete action by swiping a row from right to left; long-press enters checkbox-based multi-select. Every single or batch deletion requires confirmation, and Drive items are moved to Trash rather than permanently erased.
 - Signed APK releases produced only by GitHub Actions.
 
 ## Google Cloud setup

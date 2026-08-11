@@ -138,6 +138,17 @@ class DriveApi(
             }
         }
 
+    suspend fun trash(fileId: String, accessToken: String) = withContext(Dispatchers.IO) {
+        val url = "https://www.googleapis.com/drive/v3/files/$fileId".toHttpUrl().newBuilder()
+            .addQueryParameter("fields", "id,trashed")
+            .build()
+        val body = "{\"trashed\":true}".toRequestBody(JSON_MEDIA_TYPE)
+        client.newCall(authorizedRequest(url.toString(), accessToken).patch(body).build()).execute().use { response ->
+            val responseBody = response.body?.string().orEmpty()
+            ensureSuccessful(response.code, responseBody)
+        }
+    }
+
     private fun fetchPreview(
         file: DriveFile,
         accessToken: String,

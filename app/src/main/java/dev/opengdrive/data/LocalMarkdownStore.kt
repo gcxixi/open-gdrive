@@ -97,6 +97,17 @@ class LocalMarkdownStore(private val directory: File) {
         current.copy(dirty = true, syncError = message).also(::writeMetadata)
     }
 
+    fun delete(localId: String): Boolean = synchronized(lock) {
+        val metadata = metadataFile(localId)
+        val content = contentFile(localId)
+        val existed = metadata.exists() || content.exists()
+        val metadataDeleted = !metadata.exists() || metadata.delete()
+        val contentDeleted = !content.exists() || content.delete()
+        File(directory, "$localId.$METADATA_EXTENSION.tmp").delete()
+        File(directory, "$localId.md.tmp").delete()
+        existed && metadataDeleted && contentDeleted
+    }
+
     private fun findByDriveIdLocked(driveFileId: String): LocalMarkdownDocument? =
         directory.listFiles { file -> file.extension == METADATA_EXTENSION }
             .orEmpty()

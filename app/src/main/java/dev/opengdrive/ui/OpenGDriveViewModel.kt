@@ -19,6 +19,7 @@ import dev.opengdrive.data.isMarkdown
 import dev.opengdrive.data.matches
 import java.io.File
 import java.time.Instant
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -134,6 +135,91 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
 
     fun select(item: DriveFile) {
         if (item.isFolder()) navigateInto(item) else open(item)
+    }
+
+    fun deleteFiles(files: List<DriveFile>) {
+        val targets = files.distinctBy(DriveFile::id)
+        if (targets.isEmpty()) return
+        viewModelScope.launch {
+            val targetIds = targets.map(DriveFile::id).toSet()
+            if (state.value.selected?.file?.id?.let(targetIds::contains) == true) openJob?.cancel()
+            val localDocuments = withContext(Dispatchers.IO) {
+                targets.associateWith { file ->
+                    if (file.id.startsWith(LOCAL_FILE_PREFIX)) {
+                        localStore.find(file.id.removePrefix(LOCAL_FILE_PREFIX))
+                    } else {
+                        localStore.findByDriveId(file.id)
+                    }
+                }
+            }
+            state.value = state.value.copy(loading = true, message = null)
+            localDocuments.values.filterNotNull().forEach { document ->
+                if (activeDraft?.localId == document.localId) {
+                    localSaveJob?.cancel()
+                    localSaveJob = null
+                }
+                syncJobs[document.localId]?.let { job ->
+                    if (document.localId in syncingDrafts) {
+                        job.join()
+                    } else {
+                        job.cancel()
+                        job.join()
+                    }
+                }
+            }
+            val latestDocuments = withContext(Dispatchers.IO) {
+                localDocuments.mapValues { (_, document) -> document?.let { localStore.find(it.localId) } }
+            }
+            val deletedIds = mutableSetOf<String>()
+            val failures = mutableListOf<String>()
+            var successCount = 0
+            targets.forEach { file ->
+                try {
+                    val document = latestDocuments[file]
+                    val remoteId = document?.driveFileId ?: file.id.takeUnless { it.startsWith(LOCAL_FILE_PREFIX) }
+                    if (remoteId != null) driveApi.trash(remoteId, accessToken ?: throw DriveException.Unauthorized())
+                    withContext(Dispatchers.IO) {
+                        document?.let { localStore.delete(it.localId) }
+                        previewCache.remove(file.id)
+                        if (remoteId != null) previewCache.remove(remoteId)
+                    }
+                    deletedIds += file.id
+                    if (remoteId != null) deletedIds += remoteId
+                    successCount++
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    if (error is DriveException.Unauthorized) accessToken = null
+                    failures += "${file.name}: ${error.message ?: "delete failed"}"
+                }
+            }
+            if (state.value.selected?.file?.id?.let(deletedIds::contains) == true) {
+                activeDraft = null
+            }
+            folderCache.clear()
+            val current = state.value
+            val selectedDeleted = current.selected?.file?.id?.let(deletedIds::contains) == true
+            state.value = current.copy(
+                authorized = accessToken != null,
+                files = current.files.filterNot { it.id in deletedIds },
+                selected = current.selected?.takeUnless { it.file.id in deletedIds },
+                markdown = if (selectedDeleted) "" else current.markdown,
+                loading = false,
+                editMode = if (selectedDeleted) false else current.editMode,
+                saveState = if (selectedDeleted) SaveState.Saved else current.saveState,
+                fileSyncStates = current.fileSyncStates.filterKeys { it !in deletedIds },
+                validationState = if (selectedDeleted) {
+                    ValidationState.Ready
+                } else {
+                    current.validationState
+                },
+                message = when {
+                    failures.isEmpty() -> "Deleted $successCount item${if (successCount == 1) "" else "s"}; Drive items are in Trash"
+                    successCount == 0 -> "Delete failed: ${failures.first()}"
+                    else -> "Deleted $successCount; ${failures.size} failed: ${failures.first()}"
+                },
+            )
+        }
     }
 
     fun navigateToPath(index: Int) {
@@ -454,11 +540,16 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
     private fun scheduleSync(localId: String, delayMillis: Long) {
         if (localId in syncingDrafts) return
         syncJobs.remove(localId)?.cancel()
-        syncJobs[localId] = viewModelScope.launch {
+        lateinit var job: Job
+        job = viewModelScope.launch {
             delay(delayMillis)
-            syncJobs.remove(localId)
-            syncDocument(localId)
+            try {
+                syncDocument(localId)
+            } finally {
+                if (syncJobs[localId] === job) syncJobs.remove(localId)
+            }
         }
+        syncJobs[localId] = job
     }
 
     private suspend fun syncDocument(localId: String) {
@@ -500,13 +591,19 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
             syncingDrafts -= localId
             folderCache.clear()
             onDocumentSynced(snapshot, saved, opened.file)
-            if (saved.dirty) scheduleSync(saved.localId, AUTOSAVE_INTERVAL_MS)
+            if (saved.dirty) {
+                syncJobs.remove(localId)
+                scheduleSync(saved.localId, AUTOSAVE_INTERVAL_MS)
+            }
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: Throwable) {
-            syncingDrafts -= localId
             val message = error.message ?: "Google Drive sync failed"
             val failed = withContext(Dispatchers.IO) { localStore.markFailed(localId, message) } ?: snapshot
             if (error is DriveException.Unauthorized) accessToken = null
             updateDocumentStatus(failed, SaveState.Failed, "Sync issue: $message")
+        } finally {
+            syncingDrafts -= localId
         }
     }
 

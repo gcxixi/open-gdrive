@@ -9,6 +9,7 @@ import android.widget.TextView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -48,9 +49,11 @@ import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Image
@@ -69,6 +72,8 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -78,8 +83,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -171,6 +178,7 @@ fun OpenGDriveApp(viewModel: OpenGDriveViewModel, onAuthorize: () -> Unit) {
                     onSave = viewModel::save,
                     onCreate = viewModel::createMarkdown,
                     onRename = viewModel::renameMarkdown,
+                    onDelete = viewModel::deleteFiles,
                 )
             }
             if (state.loading) {
@@ -272,6 +280,7 @@ private fun Workspace(
     onSave: () -> Unit,
     onCreate: () -> Unit,
     onRename: (String) -> Unit,
+    onDelete: (List<DriveFile>) -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= 840.dp) {
@@ -288,6 +297,7 @@ private fun Workspace(
                         onSelect = onSelect,
                         onPathClick = onPathClick,
                         onCreate = onCreate,
+                        onDelete = onDelete,
                         modifier = Modifier.width(if (state.editMode) 300.dp else 340.dp),
                     )
                 }
@@ -299,7 +309,17 @@ private fun Workspace(
                 }
             }
         } else {
-            CompactWorkspace(state, onSelect, onPathClick, onEdit, onToggleEdit, onSave, onCreate, onRename)
+            CompactWorkspace(
+                state,
+                onSelect,
+                onPathClick,
+                onEdit,
+                onToggleEdit,
+                onSave,
+                onCreate,
+                onRename,
+                onDelete,
+            )
         }
     }
 }
@@ -313,8 +333,15 @@ private fun FilePane(
     onSelect: (DriveFile) -> Unit,
     onPathClick: (Int) -> Unit,
     onCreate: () -> Unit,
+    onDelete: (List<DriveFile>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var selectedIds by remember(path) { mutableStateOf(emptySet<String>()) }
+    var deleteRequest by remember { mutableStateOf<List<DriveFile>?>(null) }
+    val selectionMode = selectedIds.isNotEmpty()
+    LaunchedEffect(files.map(DriveFile::id)) {
+        selectedIds = selectedIds.intersect(files.map(DriveFile::id).toSet())
+    }
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(20.dp),
@@ -322,7 +349,15 @@ private fun FilePane(
         modifier = modifier.fillMaxHeight(),
     ) {
         Column {
-            Breadcrumbs(path, onPathClick, onCreate)
+            if (selectionMode) {
+                SelectionToolbar(
+                    count = selectedIds.size,
+                    onClose = { selectedIds = emptySet() },
+                    onDelete = { deleteRequest = files.filter { it.id in selectedIds } },
+                )
+            } else {
+                Breadcrumbs(path, onPathClick, onCreate)
+            }
             if (files.isEmpty()) {
                 Column(
                     Modifier.fillMaxSize().padding(28.dp),
@@ -341,11 +376,112 @@ private fun FilePane(
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(files, key = { it.id }) { file ->
-                        FileRow(file, file.id == selectedId, syncStates[file.id], onSelect)
+                        SwipeFileRow(
+                            file = file,
+                            selected = file.id == selectedId,
+                            checked = file.id in selectedIds,
+                            selectionMode = selectionMode,
+                            syncState = syncStates[file.id],
+                            onClick = {
+                                if (selectionMode) {
+                                    selectedIds = if (file.id in selectedIds) {
+                                        selectedIds - file.id
+                                    } else {
+                                        selectedIds + file.id
+                                    }
+                                } else {
+                                    onSelect(file)
+                                }
+                            },
+                            onLongClick = { selectedIds = selectedIds + file.id },
+                            onRequestDelete = { deleteRequest = listOf(file) },
+                        )
                     }
                 }
             }
         }
+    }
+    deleteRequest?.let { targets ->
+        DeleteConfirmationDialog(
+            files = targets,
+            onDismiss = { deleteRequest = null },
+            onConfirm = {
+                onDelete(targets)
+                selectedIds = emptySet()
+                deleteRequest = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun SelectionToolbar(count: Int, onClose: () -> Unit, onDelete: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().height(76.dp).padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Exit selection") }
+        Text("$count selected", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+        IconButton(onClick = onDelete) {
+            Icon(Icons.Default.Delete, contentDescription = "Delete selected", tint = MaterialTheme.colorScheme.error)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SwipeFileRow(
+    file: DriveFile,
+    selected: Boolean,
+    checked: Boolean,
+    selectionMode: Boolean,
+    syncState: SaveState?,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onRequestDelete: () -> Unit,
+) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        positionalThreshold = { distance -> distance * 0.3f },
+    )
+    LaunchedEffect(selectionMode) {
+        if (selectionMode) dismissState.reset()
+    }
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromStartToEnd = false,
+        enableDismissFromEndToStart = !selectionMode,
+        backgroundContent = {
+            Row(
+                Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.errorContainer)
+                    .padding(end = 8.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = onRequestDelete) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "Delete ${file.name}",
+                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text("Delete", color = MaterialTheme.colorScheme.onErrorContainer)
+                }
+            }
+        },
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp).clip(RoundedCornerShape(12.dp)),
+    ) {
+        FileRow(
+            file = file,
+            selected = selected,
+            checked = checked,
+            selectionMode = selectionMode,
+            syncState = syncState,
+            onClick = onClick,
+            onLongClick = onLongClick,
+        )
     }
 }
 
@@ -394,21 +530,25 @@ private fun Breadcrumbs(path: List<DriveFolder>, onPathClick: (Int) -> Unit, onC
 private fun FileRow(
     file: DriveFile,
     selected: Boolean,
+    checked: Boolean,
+    selectionMode: Boolean,
     syncState: SaveState?,
-    onSelect: (DriveFile) -> Unit,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
 ) {
     val background = if (selected) MaterialTheme.colorScheme.primaryContainer
     else MaterialTheme.colorScheme.surface
     Row(
         modifier = Modifier
-            .padding(horizontal = 8.dp, vertical = 2.dp)
             .fillMaxWidth()
             .heightIn(min = 42.dp)
-            .clip(RoundedCornerShape(12.dp))
             .background(background)
-            .clickable { onSelect(file) },
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (selectionMode) {
+            Checkbox(checked = checked, onCheckedChange = { onClick() }, modifier = Modifier.padding(start = 4.dp))
+        }
         FileTypeIcon(file, Modifier.padding(start = 12.dp))
         Text(
             file.name,
@@ -440,6 +580,35 @@ private fun FileRow(
             }
         }
     }
+}
+
+@Composable
+private fun DeleteConfirmationDialog(
+    files: List<DriveFile>,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val localCount = files.count { it.id.startsWith("local:") }
+    val remoteCount = files.size - localCount
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete ${files.size} item${if (files.size == 1) "" else "s"}?") },
+        text = {
+            Text(
+                buildString {
+                    if (remoteCount > 0) append("$remoteCount Google Drive item${if (remoteCount == 1) "" else "s"} will be moved to Trash.")
+                    if (remoteCount > 0 && localCount > 0) append("\n\n")
+                    if (localCount > 0) append("$localCount unsynced local draft${if (localCount == 1) "" else "s"} will be permanently deleted.")
+                },
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("Delete", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable
@@ -832,6 +1001,7 @@ private fun CompactWorkspace(
     onSave: () -> Unit,
     onCreate: () -> Unit,
     onRename: (String) -> Unit,
+    onDelete: (List<DriveFile>) -> Unit,
 ) {
     var showFiles by remember(state.folderPath) { mutableStateOf(state.selected == null) }
     if (showFiles || state.selected == null) {
@@ -849,6 +1019,7 @@ private fun CompactWorkspace(
                 onCreate()
                 showFiles = false
             },
+            onDelete = onDelete,
             modifier = Modifier.fillMaxSize(),
         )
     } else {

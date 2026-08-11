@@ -93,6 +93,14 @@ class PreviewCacheStore(private val directory: File) {
         prune()
     }
 
+    fun remove(fileId: String) = synchronized(lock) {
+        val key = cacheKey(fileId)
+        File(directory, "$key.properties").delete()
+        File(directory, "$key.preview").delete()
+        File(directory, "$key.properties.tmp").delete()
+        File(directory, "$key.preview.tmp").delete()
+    }
+
     private fun prune() {
         directory.listFiles { file -> file.extension == "properties" }
             .orEmpty()
