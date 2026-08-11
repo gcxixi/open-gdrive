@@ -59,6 +59,8 @@ Markwon is a mature native Android CommonMark renderer. The app enables tables, 
 
 Compose's value-based `BasicTextField` required Open GDrive to recreate and publish the complete Markdown string for every edit, while Compose and the live preview repeatedly laid out the full document. Sora Editor keeps an incremental line-based content model inside a purpose-built Android editor view and exposes change events without requiring a whole-document callback. Open GDrive deliberately converts the buffer to a `String` only after idle or an explicit flush, preserving the existing local-draft and Drive APIs without putting their cost on the keystroke path.
 
+Android 16 exposes touchpad two-finger scrolling as pixel-based gesture axes rather than only the traditional mouse-wheel axes that Sora handles. `TrackpadCodeEditor` bridges those pan distances directly to Sora's native scroller. The gesture remains a viewport-only operation and does not cross the document snapshot, preview, persistence, or Drive synchronization boundaries.
+
 ## Scope decision
 
 `drive.file` can only access files the user opened with or created through this app. The core requirement is to find existing Markdown anywhere in Drive, so the MVP requests `https://www.googleapis.com/auth/drive`. This is a restricted scope and requires Google OAuth verification before broad public distribution.

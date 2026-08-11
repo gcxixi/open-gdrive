@@ -2,6 +2,14 @@
 
 All notable changes to Open GDrive are documented here.
 
+## [0.4.8] - 2026-08-11
+
+### Fixed
+
+- Restored Android 16 touchpad two-finger scrolling in the Markdown editor by bridging pixel-based trackpad pan gestures to Sora's native scroller.
+- Kept trackpad scrolling entirely inside the editor viewport so it does not create document snapshots, trigger preview rendering, or enter the local-save and Drive-sync pipeline.
+- Preserved touchscreen dragging, mouse-wheel scrolling, selection, and hardware-keyboard behavior.
+
 ## [0.4.7] - 2026-08-11
 
 ### Added
@@ -28,4 +36,3 @@ All notable changes to Open GDrive are documented here.
 
 - Replaced the top workspace control group with a compact bottom-right settings speed dial.
 - Kept file-list, preview, refresh, and sync-state controls reachable independently of pane visibility.
-

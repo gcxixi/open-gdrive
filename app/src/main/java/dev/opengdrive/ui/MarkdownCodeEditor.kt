@@ -1,6 +1,8 @@
 package dev.opengdrive.ui
 
+import android.content.Context
 import android.graphics.Typeface
+import android.view.MotionEvent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -21,6 +23,26 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/**
+ * Sora handles mouse-wheel ACTION_SCROLL events, but Android 16 reports touchpad two-finger
+ * scrolling as pixel-based gesture axes. Bridge that newer event shape to Sora's incremental
+ * scroller so scrolling never creates a document snapshot or enters the save/sync pipeline.
+ */
+private class TrackpadCodeEditor(context: Context) : CodeEditor(context) {
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (event.classification == MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE) {
+            val panX = event.getAxisValue(MotionEvent.AXIS_GESTURE_SCROLL_X_DISTANCE)
+            val panY = event.getAxisValue(MotionEvent.AXIS_GESTURE_SCROLL_Y_DISTANCE)
+            if (panX != 0f || panY != 0f) {
+                // Gesture axes follow the fingers; editor offsets move in the opposite direction.
+                eventHandler.scrollBy(-panX, -panY)
+                return true
+            }
+        }
+        return super.onGenericMotionEvent(event)
+    }
+}
 
 internal class MarkdownEditorController {
     private var editor: CodeEditor? = null
@@ -85,7 +107,7 @@ internal fun MarkdownCodeEditor(
     key(documentId) {
         AndroidView(
             factory = { context ->
-                CodeEditor(context).apply {
+                TrackpadCodeEditor(context).apply {
                     setText(initialText)
                     setTextSize(16f)
                     setTypefaceText(Typeface.create("sans", Typeface.NORMAL))
