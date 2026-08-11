@@ -12,8 +12,8 @@ android {
         applicationId = "dev.opengdrive"
         minSdk = 36
         targetSdk = 36
-        versionCode = providers.gradleProperty("VERSION_CODE").orNull?.toInt() ?: 2
-        versionName = providers.gradleProperty("VERSION_NAME").orNull ?: "0.2.0"
+        versionCode = providers.gradleProperty("VERSION_CODE").orNull?.toInt() ?: 3
+        versionName = providers.gradleProperty("VERSION_NAME").orNull ?: "0.2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

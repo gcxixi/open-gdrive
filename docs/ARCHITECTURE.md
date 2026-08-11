@@ -21,6 +21,8 @@ Open GDrive is a tablet-first Android 16 app. Google Drive is the source of trut
 
 Preview downloads are capped at 25 MB to avoid loading an unexpectedly large Drive file into the app process.
 
+Drive list responses use an explicit streaming JSON parser. They do not rely on reflected Kotlin model names, so R8 minification cannot silently turn a successful Release response into an empty file list.
+
 The token is deliberately held in memory only. After process death or a 401 response, the app requests authorization again; Google can satisfy an existing grant without showing consent every time.
 
 ## Why Markwon
