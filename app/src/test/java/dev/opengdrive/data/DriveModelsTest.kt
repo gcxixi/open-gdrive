@@ -31,4 +31,36 @@ class DriveModelsTest {
             DriveApi.childQuery("folder'id"),
         )
     }
+
+    @Test fun `Drive response parser is independent of reflected model names`() {
+        val page = DriveApi.parseFilePage(
+            """
+            {
+              "nextPageToken": "next",
+              "files": [
+                {
+                  "id": "folder-1",
+                  "name": "Notes",
+                  "mimeType": "$GOOGLE_FOLDER",
+                  "capabilities": {"canEdit": true, "canDownload": true},
+                  "ignoredField": "safe to ignore"
+                },
+                {
+                  "id": "markdown-1",
+                  "name": "hello.md",
+                  "mimeType": "text/markdown",
+                  "size": "42",
+                  "webViewLink": "https://drive.google.com/file/d/markdown-1/view"
+                }
+              ]
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals("next", page.nextPageToken)
+        assertEquals(2, page.files.size)
+        assertTrue(page.files.first().isFolder())
+        assertTrue(page.files.last().isMarkdown())
+        assertEquals("42", page.files.last().size)
+    }
 }

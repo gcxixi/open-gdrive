@@ -1,7 +1,6 @@
 package dev.opengdrive.data
 
-import com.squareup.moshi.Moshi
-import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import com.squareup.moshi.JsonReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -10,13 +9,11 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okio.Buffer
 
 class DriveApi(
     private val client: OkHttpClient = OkHttpClient(),
-    moshi: Moshi = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build(),
 ) {
-    private val filePageAdapter = moshi.adapter(DriveFilePage::class.java)
-
     suspend fun listFiles(accessToken: String, folderId: String = "all"): List<DriveFile> =
         withContext(Dispatchers.IO) {
             val files = mutableListOf<DriveFile>()
@@ -37,7 +34,7 @@ class DriveApi(
                 client.newCall(authorizedRequest(url.toString(), accessToken).build()).execute().use { response ->
                     val body = response.body?.string().orEmpty()
                     ensureSuccessful(response.code, body)
-                    val page = filePageAdapter.fromJson(body) ?: DriveFilePage()
+                    val page = parseFilePage(body)
                     files += page.files
                     pageToken = page.nextPageToken
                 }
@@ -122,6 +119,73 @@ class DriveApi(
     }
 
     companion object {
+        internal fun parseFilePage(json: String): DriveFilePage {
+            val reader = JsonReader.of(Buffer().writeUtf8(json))
+            val files = mutableListOf<DriveFile>()
+            var nextPageToken: String? = null
+            reader.beginObject()
+            while (reader.hasNext()) {
+                when (reader.nextName()) {
+                    "nextPageToken" -> nextPageToken = reader.nextNullableString()
+                    "files" -> {
+                        reader.beginArray()
+                        while (reader.hasNext()) parseDriveFile(reader)?.let(files::add)
+                        reader.endArray()
+                    }
+                    else -> reader.skipValue()
+                }
+            }
+            reader.endObject()
+            return DriveFilePage(files, nextPageToken)
+        }
+
+        private fun parseDriveFile(reader: JsonReader): DriveFile? {
+            var id: String? = null
+            var name: String? = null
+            var mimeType = "application/octet-stream"
+            var modifiedTime: String? = null
+            var size: String? = null
+            var webViewLink: String? = null
+            var capabilities: DriveCapabilities? = null
+            reader.beginObject()
+            while (reader.hasNext()) {
+                when (reader.nextName()) {
+                    "id" -> id = reader.nextNullableString()
+                    "name" -> name = reader.nextNullableString()
+                    "mimeType" -> mimeType = reader.nextNullableString() ?: mimeType
+                    "modifiedTime" -> modifiedTime = reader.nextNullableString()
+                    "size" -> size = reader.nextNullableString()
+                    "webViewLink" -> webViewLink = reader.nextNullableString()
+                    "capabilities" -> capabilities = parseCapabilities(reader)
+                    else -> reader.skipValue()
+                }
+            }
+            reader.endObject()
+            return if (id != null && name != null) {
+                DriveFile(id, name, mimeType, modifiedTime, size, webViewLink, capabilities)
+            } else {
+                null
+            }
+        }
+
+        private fun parseCapabilities(reader: JsonReader): DriveCapabilities {
+            var canEdit = false
+            var canDownload = true
+            reader.beginObject()
+            while (reader.hasNext()) {
+                when (reader.nextName()) {
+                    "canEdit" -> canEdit = reader.nextBoolean()
+                    "canDownload" -> canDownload = reader.nextBoolean()
+                    else -> reader.skipValue()
+                }
+            }
+            reader.endObject()
+            return DriveCapabilities(canEdit, canDownload)
+        }
+
+        private fun JsonReader.nextNullableString(): String? =
+            if (peek() == JsonReader.Token.NULL) nextNull() else nextString()
+
         internal fun childQuery(folderId: String): String {
             if (folderId == "all") return "trashed = false"
             val escaped = folderId.replace("\\", "\\\\").replace("'", "\\'")
