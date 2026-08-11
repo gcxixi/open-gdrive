@@ -6,6 +6,11 @@ import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import android.text.method.LinkMovementMethod
 import android.widget.TextView
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.animate
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -65,6 +70,7 @@ import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Slideshow
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.Sync
@@ -240,7 +246,7 @@ private fun Workspace(
     onRefresh: () -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val toolbarReservedWidth = workspaceToolbarReservedWidth(state)
+        val toolbarReservedWidth = 0.dp
         if (maxWidth >= 840.dp) {
             Row(
                 Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer).padding(12.dp),
@@ -299,7 +305,7 @@ private fun Workspace(
             onToggleFilePane = onToggleFilePane,
             onTogglePreviewPane = onTogglePreviewPane,
             onRefresh = onRefresh,
-            modifier = Modifier.align(Alignment.TopEnd).padding(top = 16.dp, end = 16.dp),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 18.dp, bottom = 18.dp),
         )
     }
 }
@@ -312,47 +318,113 @@ private fun FloatingWorkspaceToolbar(
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        shape = CircleShape,
-        tonalElevation = 4.dp,
-        shadowElevation = 2.dp,
+    var expanded by remember { mutableStateOf(false) }
+    Column(
         modifier = modifier,
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(9.dp),
     ) {
-        Row(
-            Modifier.height(48.dp).padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn() + scaleIn(transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 1f)),
+            exit = fadeOut() + scaleOut(transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 1f)),
         ) {
-            if (state.editMode || state.saveState != SaveState.Saved) SaveIndicator(state.saveState)
-            if (state.selected != null) {
-                IconButton(onClick = onToggleFilePane) {
-                    Icon(
-                        if (state.filePaneVisible) Icons.Default.MenuOpen else Icons.Default.FolderOpen,
-                        contentDescription = if (state.filePaneVisible) "Hide file list" else "Show file list",
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                if (state.editMode || state.saveState != SaveState.Saved) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shape = CircleShape,
+                        tonalElevation = 3.dp,
+                        shadowElevation = 8.dp,
+                    ) {
+                        SaveIndicator(state.saveState)
+                    }
+                }
+                if (state.selected != null) {
+                    FloatingToolbarButton(
+                        icon = if (state.filePaneVisible) Icons.Default.MenuOpen else Icons.Default.FolderOpen,
+                        description = if (state.filePaneVisible) "Hide file list" else "Show file list",
+                        onClick = {
+                            expanded = false
+                            onToggleFilePane()
+                        },
                     )
                 }
-            }
-            if (state.editMode) {
-                IconButton(onClick = onTogglePreviewPane) {
-                    Icon(
-                        if (state.previewPaneVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                        contentDescription = if (state.previewPaneVisible) "Hide preview" else "Show preview",
+                if (state.editMode) {
+                    FloatingToolbarButton(
+                        icon = if (state.previewPaneVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                        description = if (state.previewPaneVisible) "Hide preview" else "Show preview",
+                        onClick = {
+                            expanded = false
+                            onTogglePreviewPane()
+                        },
                     )
                 }
+                FloatingToolbarButton(
+                    icon = Icons.Default.Refresh,
+                    description = "Refresh files",
+                    onClick = {
+                        expanded = false
+                        onRefresh()
+                    },
+                )
             }
-            IconButton(onClick = onRefresh) {
-                Icon(Icons.Default.Refresh, contentDescription = "Refresh files")
+        }
+        Surface(
+            color = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            shape = CircleShape,
+            tonalElevation = 6.dp,
+            shadowElevation = 14.dp,
+            modifier = Modifier.size(44.dp),
+        ) {
+            Box(Modifier.fillMaxSize()) {
+                IconButton(onClick = { expanded = !expanded }, modifier = Modifier.fillMaxSize()) {
+                    Icon(
+                        Icons.Default.Settings,
+                        contentDescription = if (expanded) "Close workspace controls" else "Open workspace controls",
+                        modifier = Modifier.size(21.dp),
+                    )
+                }
+                SaveStateBadge(state.saveState, Modifier.align(Alignment.TopEnd).padding(3.dp))
             }
         }
     }
 }
 
-private fun workspaceToolbarReservedWidth(state: EditorState): Dp {
-    val actionCount = 1 +
-        (if (state.selected != null) 1 else 0) +
-        (if (state.editMode) 1 else 0)
-    val saveIndicatorWidth = if (state.editMode || state.saveState != SaveState.Saved) 104 else 0
-    return (actionCount * 48 + saveIndicatorWidth + 20).dp
+@Composable
+private fun FloatingToolbarButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    onClick: () -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = CircleShape,
+        tonalElevation = 4.dp,
+        shadowElevation = 12.dp,
+        modifier = Modifier.size(38.dp),
+    ) {
+        IconButton(onClick = onClick, modifier = Modifier.fillMaxSize()) {
+            Icon(icon, contentDescription = description, modifier = Modifier.size(19.dp))
+        }
+    }
+}
+
+@Composable
+private fun SaveStateBadge(saveState: SaveState, modifier: Modifier = Modifier) {
+    if (saveState == SaveState.Saved) return
+    val color = when (saveState) {
+        SaveState.Failed -> MaterialTheme.colorScheme.error
+        SaveState.Pending -> MaterialTheme.colorScheme.tertiary
+        SaveState.Saving -> MaterialTheme.colorScheme.primary
+        SaveState.Saved -> Color.Transparent
+    }
+    Box(modifier.size(9.dp).clip(CircleShape).background(color))
 }
 
 @Composable
@@ -1143,7 +1215,10 @@ private fun SaveIndicator(saveState: SaveState) {
         SaveState.Saving -> Icons.Default.Sync to "Syncing"
         SaveState.Failed -> Icons.Default.ErrorOutline to "Sync issue"
     }
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp)) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
+    ) {
         val color = if (saveState == SaveState.Failed) MaterialTheme.colorScheme.error
         else MaterialTheme.colorScheme.onSurfaceVariant
         Icon(icon, contentDescription = text, tint = color, modifier = Modifier.size(17.dp))
