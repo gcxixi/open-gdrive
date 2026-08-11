@@ -25,7 +25,7 @@ Drive list responses use an explicit streaming JSON parser. They do not rely on 
 
 Folder listings use a five-minute process-memory cache keyed by Drive folder ID. Revisiting a folder avoids a network request while the entry is fresh, and the refresh action always bypasses the cache. The cache is intentionally not written to disk because file names are private Drive metadata and the current authorization flow does not expose a stable account identifier for safely separating multiple accounts.
 
-Drive list requests include the static, unauthenticated `iconLink` metadata. Google Workspace rows use that official icon with a branded-color local fallback; Markdown and PDF use deterministic local icons so their identity remains clear offline.
+Google Workspace and Markdown rows use local Simple Icons brand vectors, while the remaining file types use Material icons. Every glyph is rendered at 20dp inside the same 24dp slot, so the list stays aligned and works fully offline.
 
 The token is deliberately held in memory only. After process death or a 401 response, the app requests authorization again; Google can satisfy an existing grant without showing consent every time.
 

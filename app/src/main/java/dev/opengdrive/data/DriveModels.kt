@@ -8,7 +8,6 @@ data class DriveFile(
     val size: String? = null,
     val webViewLink: String? = null,
     val capabilities: DriveCapabilities? = null,
-    val iconLink: String? = null,
 )
 
 data class DriveCapabilities(

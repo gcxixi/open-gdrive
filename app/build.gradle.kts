@@ -13,8 +13,8 @@ android {
         applicationId = "dev.opengdrive"
         minSdk = 36
         targetSdk = 36
-        versionCode = providers.gradleProperty("VERSION_CODE").orNull?.toInt() ?: 5
-        versionName = providers.gradleProperty("VERSION_NAME").orNull ?: "0.3.1"
+        versionCode = providers.gradleProperty("VERSION_CODE").orNull?.toInt() ?: 6
+        versionName = providers.gradleProperty("VERSION_NAME").orNull ?: "0.3.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -74,8 +74,7 @@ dependencies {
     implementation("com.google.android.gms:play-services-auth:21.6.0")
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
     implementation("com.squareup.moshi:moshi:1.15.2")
-    implementation("io.coil-kt.coil3:coil-compose:3.3.0")
-    implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
+    implementation("io.github.ardasoyturk.compose.icons:simple-icons:2.0.7")
 
     implementation("io.noties.markwon:core:4.6.2")
     implementation("io.noties.markwon:ext-strikethrough:4.6.2")
