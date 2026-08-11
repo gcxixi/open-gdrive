@@ -33,6 +33,7 @@ data class EditorState(
     val fileSyncStates: Map<String, SaveState> = emptyMap(),
     val editMode: Boolean = false,
     val filePaneVisible: Boolean = true,
+    val previewPaneVisible: Boolean = true,
     val message: String? = null,
 ) {
     val canEditMarkdown: Boolean
@@ -83,6 +84,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                 selected = OpenDriveFile(file, PreviewData.Markdown(""), null),
                 markdown = "",
                 editMode = true,
+                previewPaneVisible = true,
                 saveState = SaveState.Pending,
                 fileSyncStates = current.fileSyncStates + (file.id to SaveState.Pending),
                 message = null,
@@ -204,11 +206,20 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
         val current = state.value
         if (!current.editMode && !current.canEditMarkdown) return
         if (current.editMode) save()
-        state.value = current.copy(editMode = !current.editMode)
+        state.value = current.copy(
+            editMode = !current.editMode,
+            previewPaneVisible = if (current.editMode) current.previewPaneVisible else true,
+        )
     }
 
     fun toggleFilePane() {
         state.value = state.value.copy(filePaneVisible = !state.value.filePaneVisible)
+    }
+
+    fun togglePreviewPane() {
+        val current = state.value
+        if (!current.editMode) return
+        state.value = current.copy(previewPaneVisible = !current.previewPaneVisible)
     }
 
     fun edit(markdown: String) {

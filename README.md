@@ -11,6 +11,7 @@ An Android 16, tablet-first Markdown editor that uses Google Drive as its storag
 - Uses a clean file-list + preview layout by default.
 - Uses compact single-line file rows with consistently sized Simple Icons brand vectors for Google Workspace and Markdown.
 - Enters a three-pane file/editor/preview workspace only while editing Markdown; the file pane can be collapsed.
+- Lets tablet editors hide the file list and preview independently for a distraction-free full-width editor.
 - Persists edits and renames to app-private local storage first, then syncs changed Markdown to Drive after five seconds or on explicit save.
 - Keeps unsynced drafts across process restarts and surfaces a compact red sync warning when Drive synchronization fails.
 - Optimistic conflict protection when Drive returns an ETag.

@@ -8,7 +8,7 @@ Open GDrive is a tablet-first Android 16 app. Google Drive is the source of trut
 2. `DriveApi` calls Drive REST v3 directly with the short-lived access token.
 3. `OpenGDriveViewModel` owns folder navigation, the current file, editor buffer, and save state.
 4. The default list-detail layout shows a folder/file pane and one preview pane.
-5. Markdown editing is opt-in. Edit mode adds the editor between files and preview; hiding files produces a focused editor/preview layout.
+5. Markdown editing is opt-in. Edit mode adds the editor between files and preview; the file and preview panes can be hidden independently, including a full-width distraction-free editor.
 6. Markdown editing is local-first. Content and filename changes are atomically persisted in app-private storage before a Drive request is scheduled.
 7. A dirty local revision is uploaded after five seconds or immediately on explicit save. `If-Match` prevents silently replacing a remotely changed file when Drive supplies an ETag.
 8. New documents begin as `untitled-N.md` local drafts. A multipart Drive upload later creates metadata and content together; a successful response binds the stable local ID to the new Drive file ID.

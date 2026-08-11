@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -63,6 +64,8 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Slideshow
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -145,6 +148,7 @@ fun OpenGDriveApp(viewModel: OpenGDriveViewModel, onAuthorize: () -> Unit) {
             CompactHeader(
                 state = state,
                 onToggleFilePane = viewModel::toggleFilePane,
+                onTogglePreviewPane = viewModel::togglePreviewPane,
                 onRefresh = viewModel::refresh,
             )
         },
@@ -181,6 +185,7 @@ fun OpenGDriveApp(viewModel: OpenGDriveViewModel, onAuthorize: () -> Unit) {
 private fun CompactHeader(
     state: EditorState,
     onToggleFilePane: () -> Unit,
+    onTogglePreviewPane: () -> Unit,
     onRefresh: () -> Unit,
 ) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
@@ -201,6 +206,14 @@ private fun CompactHeader(
                         Icon(
                             if (state.filePaneVisible) Icons.Default.MenuOpen else Icons.Default.FolderOpen,
                             contentDescription = if (state.filePaneVisible) "Hide file list" else "Show file list",
+                        )
+                    }
+                }
+                if (state.editMode) {
+                    IconButton(onClick = onTogglePreviewPane) {
+                        Icon(
+                            if (state.previewPaneVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = if (state.previewPaneVisible) "Hide preview" else "Show preview",
                         )
                     }
                 }
@@ -276,7 +289,9 @@ private fun Workspace(
                 if (state.editMode) {
                     EditorPane(state, onEdit, onToggleEdit, onSave, onRename, Modifier.weight(1f))
                 }
-                PreviewPane(state, onToggleEdit, onRename, Modifier.weight(1f))
+                if (!state.editMode || state.previewPaneVisible) {
+                    PreviewPane(state, onToggleEdit, Modifier.weight(1f))
+                }
             }
         } else {
             CompactWorkspace(state, onSelect, onPathClick, onEdit, onToggleEdit, onSave, onCreate, onRename)
@@ -426,10 +441,8 @@ private fun FileRow(
 private fun PreviewPane(
     state: EditorState,
     onToggleEdit: () -> Unit,
-    onRename: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var showRename by remember(state.selected?.file?.id) { mutableStateOf(false) }
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(20.dp),
@@ -454,11 +467,6 @@ private fun PreviewPane(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (state.canEditMarkdown) {
-                    IconButton(onClick = { showRename = true }) {
-                        Icon(Icons.Default.DriveFileRenameOutline, contentDescription = "Rename Markdown")
-                    }
-                }
                 if (state.canEditMarkdown && !state.editMode) {
                     FilledTonalButton(onClick = onToggleEdit) {
                         Icon(Icons.Default.Edit, null, Modifier.size(18.dp))
@@ -474,16 +482,6 @@ private fun PreviewPane(
             }
             PreviewContent(livePreview, selected.file.webViewLink, Modifier.fillMaxSize())
         }
-    }
-    if (showRename) {
-        RenameDialog(
-            currentName = state.selected?.file?.name.orEmpty(),
-            onDismiss = { showRename = false },
-            onConfirm = {
-                onRename(it)
-                showRename = false
-            },
-        )
     }
 }
 
@@ -836,7 +834,7 @@ private fun CompactWorkspace(
             if (state.editMode) {
                 EditorPane(state, onEdit, onToggleEdit, onSave, onRename, Modifier.weight(1f))
             } else {
-                PreviewPane(state, onToggleEdit, onRename, Modifier.weight(1f))
+                PreviewPane(state, onToggleEdit, Modifier.weight(1f))
             }
         }
     }
@@ -862,13 +860,19 @@ private fun SaveIndicator(saveState: SaveState) {
 @Composable
 private fun FileTypeIcon(file: DriveFile, modifier: Modifier = Modifier) {
     val localIcon = fileLocalIcon(file)
-    Box(modifier.size(24.dp), contentAlignment = Alignment.Center) {
-        Icon(
-            localIcon.icon,
-            contentDescription = fileTypeLabel(file),
-            tint = localIcon.tint,
-            modifier = Modifier.size(20.dp),
-        )
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = CircleShape,
+        modifier = modifier.size(28.dp),
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(
+                localIcon.icon,
+                contentDescription = fileTypeLabel(file),
+                tint = localIcon.tint,
+                modifier = Modifier.size(18.dp),
+            )
+        }
     }
 }
 
