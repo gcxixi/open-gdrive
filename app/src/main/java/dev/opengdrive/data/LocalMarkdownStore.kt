@@ -99,6 +99,11 @@ class LocalMarkdownStore(private val directory: File) {
         current.copy(dirty = true, syncError = message).also(::writeMetadata)
     }
 
+    fun updateParent(localId: String, parentId: String): LocalMarkdownDocument? = synchronized(lock) {
+        val current = loadLocked(localId) ?: return@synchronized null
+        current.copy(parentId = parentId).also(::writeMetadata)
+    }
+
     fun delete(localId: String): Boolean = synchronized(lock) {
         val metadata = metadataFile(localId)
         val content = contentFile(localId)

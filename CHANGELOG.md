@@ -2,6 +2,19 @@
 
 All notable changes to Open GDrive are documented here.
 
+## [0.4.9] - 2026-08-20
+
+### Added
+
+- Added YAML Front Matter support for Markdown documents. A leading `---` metadata block is rendered separately from the CommonMark body while the editor and Drive file preserve the original source.
+- Added native pull-to-refresh to the file list without clearing cached rows while Drive responds.
+- Added batch Move for checkbox-selected files, folders, and local-only Markdown drafts, with a navigable My Drive destination picker and best-effort failure reporting.
+
+### Changed
+
+- Drive list metadata now retains parent IDs so remote moves can add the destination and remove the old parent in one request.
+- An open Markdown document remains in the editor after being moved, preventing pending editor input from being discarded.
+
 ## [0.4.8] - 2026-08-11
 
 ### Fixed

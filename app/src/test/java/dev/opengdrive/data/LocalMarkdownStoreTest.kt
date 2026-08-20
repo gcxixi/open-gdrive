@@ -60,4 +60,16 @@ class LocalMarkdownStoreTest {
         assertEquals(null, store.find(created.localId))
         assertFalse(store.delete(created.localId))
     }
+
+    @Test fun `moving a draft updates only its parent metadata`() {
+        val created = store.create("notes.md", "old-folder")
+
+        val moved = store.updateParent(created.localId, "new-folder")!!
+
+        assertEquals("new-folder", moved.parentId)
+        assertEquals(created.content, moved.content)
+        assertEquals(created.revision, moved.revision)
+        assertEquals(created.dirty, moved.dirty)
+        assertEquals("new-folder", store.find(created.localId)!!.parentId)
+    }
 }

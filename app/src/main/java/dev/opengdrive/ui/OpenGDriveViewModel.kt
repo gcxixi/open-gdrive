@@ -33,6 +33,7 @@ data class EditorState(
     val selected: OpenDriveFile? = null,
     val markdown: String = "",
     val loading: Boolean = false,
+    val refreshing: Boolean = false,
     val localSaveState: LocalSaveState = LocalSaveState.Saved,
     val saveState: SaveState = SaveState.Saved,
     val fileSyncStates: Map<String, SaveState> = emptyMap(),
@@ -40,6 +41,7 @@ data class EditorState(
     val filePaneVisible: Boolean = true,
     val previewPaneVisible: Boolean = true,
     val validationState: ValidationState = ValidationState.Ready,
+    val moveDestination: MoveDestinationState? = null,
     val message: String? = null,
 ) {
     val isEditableMarkdown: Boolean
@@ -48,6 +50,14 @@ data class EditorState(
     val canEditMarkdown: Boolean
         get() = isEditableMarkdown && validationState == ValidationState.Ready
 }
+
+data class MoveDestinationState(
+    val targets: List<DriveFile>,
+    val path: List<DriveFolder> = listOf(DriveFolder("root", "My Drive")),
+    val folders: List<DriveFile> = emptyList(),
+    val loading: Boolean = true,
+    val moving: Boolean = false,
+)
 
 enum class SaveState { Saved, Pending, Saving, Failed }
 enum class LocalSaveState { Saved, Saving }
@@ -224,6 +234,147 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                     failures.isEmpty() -> "Deleted $successCount item${if (successCount == 1) "" else "s"}; Drive items are in Trash"
                     successCount == 0 -> "Delete failed: ${failures.first()}"
                     else -> "Deleted $successCount; ${failures.size} failed: ${failures.first()}"
+                },
+            )
+        }
+    }
+
+    fun startMove(files: List<DriveFile>) {
+        val targets = files.distinctBy(DriveFile::id)
+        if (targets.isEmpty()) return
+        val picker = MoveDestinationState(targets = targets)
+        state.value = state.value.copy(moveDestination = picker, message = null)
+        loadMoveFolders(picker.path.last())
+    }
+
+    fun cancelMove() {
+        state.value = state.value.copy(moveDestination = null)
+    }
+
+    fun navigateMoveInto(folder: DriveFile) {
+        if (!folder.isFolder()) return
+        val picker = state.value.moveDestination ?: return
+        val destination = DriveFolder(folder.id, folder.name)
+        state.value = state.value.copy(
+            moveDestination = picker.copy(
+                path = picker.path + destination,
+                folders = emptyList(),
+                loading = true,
+            ),
+        )
+        loadMoveFolders(destination)
+    }
+
+    fun navigateMoveToPath(index: Int) {
+        val picker = state.value.moveDestination ?: return
+        if (index !in picker.path.indices || index == picker.path.lastIndex) return
+        val path = picker.path.take(index + 1)
+        state.value = state.value.copy(
+            moveDestination = picker.copy(path = path, folders = emptyList(), loading = true),
+        )
+        loadMoveFolders(path.last())
+    }
+
+    fun confirmMove() {
+        val picker = state.value.moveDestination ?: return
+        val token = accessToken ?: return
+        val destination = picker.path.last()
+        viewModelScope.launch {
+            state.value = state.value.copy(
+                moveDestination = picker.copy(loading = true, moving = true),
+                message = null,
+            )
+            flushLocalSave(scheduleRemoteSync = false)
+            val documents = withContext(Dispatchers.IO) {
+                picker.targets.associateWith { file ->
+                    if (file.id.startsWith(LOCAL_FILE_PREFIX)) {
+                        localStore.find(file.id.removePrefix(LOCAL_FILE_PREFIX))
+                    } else {
+                        localStore.findByDriveId(file.id)
+                    }
+                }
+            }
+            documents.values.filterNotNull().forEach { document ->
+                syncJobs.remove(document.localId)?.let { job ->
+                    if (document.localId in syncingDrafts) job.join() else {
+                        job.cancel()
+                        job.join()
+                    }
+                }
+            }
+            val latestDocuments = withContext(Dispatchers.IO) {
+                documents.mapValues { (_, document) -> document?.let { localStore.find(it.localId) } }
+            }
+            val movedIds = mutableSetOf<String>()
+            val movedFiles = mutableMapOf<String, DriveFile>()
+            val documentsToResume = mutableListOf<LocalMarkdownDocument>()
+            val failures = mutableListOf<String>()
+            var successCount = 0
+            picker.targets.forEach { file ->
+                try {
+                    val document = latestDocuments[file]
+                    val remoteId = document?.driveFileId ?: file.id.takeUnless { it.startsWith(LOCAL_FILE_PREFIX) }
+                    val movedRemote = remoteId?.let {
+                        driveApi.move(file.copy(id = it), destination.id, token)
+                    }
+                    var movedDocument = document?.let {
+                        withContext(Dispatchers.IO) { localStore.updateParent(it.localId, destination.id) }
+                    }
+                    val active = activeDraft
+                    if (active != null && active.localId == movedDocument?.localId) {
+                        // A delayed Sora snapshot may arrive while the Drive move is in flight.
+                        // Persist that newest in-memory revision with the new parent before resuming sync.
+                        localSaveJob?.cancel()
+                        localSaveJob = null
+                        syncJobs.remove(active.localId)?.cancel()
+                        movedDocument = withContext(Dispatchers.IO) {
+                            localStore.save(active.copy(parentId = destination.id))
+                        }
+                        activeDraft = movedDocument
+                    }
+                    movedDocument?.let(documentsToResume::add)
+                    val movedFile = movedRemote ?: file.copy(parents = listOf(destination.id))
+                    movedIds += file.id
+                    movedFiles[file.id] = movedFile
+                    // A create already in flight can replace a local row ID while this move waits.
+                    // Track both identities so the current list and open selection update atomically.
+                    remoteId?.let {
+                        movedIds += it
+                        movedFiles[it] = movedFile
+                    }
+                    successCount++
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    if (error is DriveException.Unauthorized) accessToken = null
+                    latestDocuments[file]?.let(documentsToResume::add)
+                    failures += "${file.name}: ${error.message ?: "move failed"}"
+                }
+            }
+            documentsToResume.distinctBy(LocalMarkdownDocument::localId)
+                .filter(LocalMarkdownDocument::dirty)
+                .forEach { scheduleSync(it.localId, if (it.driveFileId == null) 0 else REMOTE_SYNC_IDLE_MS) }
+            folderCache.clear()
+            val current = state.value
+            val currentFolderId = current.folderPath.last().id
+            val staysVisible = currentFolderId == "all" || currentFolderId == destination.id
+            state.value = current.copy(
+                authorized = accessToken != null,
+                files = if (staysVisible) {
+                    sortFiles(current.files.map { movedFiles[it.id] ?: it })
+                } else {
+                    current.files.filterNot { it.id in movedIds }
+                },
+                // Keep an open document active even after its row leaves this folder. This lets
+                // Sora flush any not-yet-snapshotted keystrokes without losing the editing session.
+                selected = current.selected?.let { opened ->
+                    movedFiles[opened.file.id]?.let { opened.copy(file = it) } ?: opened
+                },
+                moveDestination = null,
+                message = when {
+                    failures.isEmpty() -> "Moved $successCount item${if (successCount == 1) "" else "s"} to ${destination.name}"
+                    successCount == 0 -> "Move failed: ${failures.first()}"
+                    else -> "Moved $successCount; ${failures.size} failed: ${failures.first()}"
                 },
             )
         }
@@ -468,7 +619,13 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
         viewModelScope.launch {
-            state.value = state.value.copy(files = emptyList(), loading = true, message = null)
+            val keepCurrentList = forceRefresh && state.value.files.isNotEmpty()
+            state.value = state.value.copy(
+                files = if (keepCurrentList) state.value.files else emptyList(),
+                loading = !keepCurrentList,
+                refreshing = keepCurrentList,
+                message = null,
+            )
             runCatching { driveApi.listFiles(token, folder.id) }
                 .onSuccess { files ->
                     folderCache.put(folder.id, files)
@@ -495,8 +652,37 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
             files = sortFiles(merged.distinctBy(DriveFile::id)),
             fileSyncStates = syncStates,
             loading = false,
+            refreshing = false,
             message = null,
         )
+    }
+
+    private fun loadMoveFolders(folder: DriveFolder) {
+        val token = accessToken ?: return
+        viewModelScope.launch {
+            runCatching { driveApi.listFolders(token, folder.id) }
+                .onSuccess { folders ->
+                    val current = state.value.moveDestination ?: return@onSuccess
+                    if (current.path.last().id != folder.id) return@onSuccess
+                    val targetIds = current.targets.map(DriveFile::id).toSet()
+                    state.value = state.value.copy(
+                        moveDestination = current.copy(
+                            folders = sortFiles(folders.filterNot { it.id in targetIds }),
+                            loading = false,
+                        ),
+                    )
+                }
+                .onFailure { error ->
+                    if (error is DriveException.Unauthorized) accessToken = null
+                    val current = state.value.moveDestination ?: return@onFailure
+                    if (current.path.last().id != folder.id) return@onFailure
+                    state.value = state.value.copy(
+                        authorized = accessToken != null,
+                        moveDestination = current.copy(loading = false),
+                        message = error.message ?: "Could not load Drive folders",
+                    )
+                }
+        }
     }
 
     private suspend fun applyOpenedFile(opened: OpenDriveFile) {
@@ -546,13 +732,13 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    private suspend fun flushLocalSave() {
+    private suspend fun flushLocalSave(scheduleRemoteSync: Boolean = true) {
         localSaveJob?.cancel()
         localSaveJob = null
         val document = activeDraft ?: return
         val saved = withContext(Dispatchers.IO) { localStore.save(document) }
         markLocalSaved(saved)
-        if (document.dirty) scheduleSync(document.localId, 0)
+        if (scheduleRemoteSync && document.dirty) scheduleSync(document.localId, 0)
     }
 
     private fun scheduleSync(localId: String, delayMillis: Long) {
@@ -701,6 +887,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
         state.value = state.value.copy(
             authorized = accessToken != null,
             loading = false,
+            refreshing = false,
             validationState = if (state.value.validationState == ValidationState.Checking) {
                 ValidationState.Failed
             } else {

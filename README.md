@@ -6,9 +6,9 @@ An Android 16, tablet-first Markdown editor that uses Google Drive as its storag
 
 - Browses all files and folders in Google Drive.
 - Creates new Markdown files immediately as local drafts, then creates the matching Drive file asynchronously.
-- Reuses folder listings from a five-minute in-memory cache; manual refresh always bypasses it.
+- Reuses folder listings from a five-minute in-memory cache; toolbar refresh and list pull-to-refresh always bypass it without clearing the visible cache first.
 - Opens previously viewed files from an app-private preview cache immediately, then validates the cached revision against Drive asynchronously. ETag is preferred, with modified time and size as fallback.
-- Previews Markdown with fenced-code syntax highlighting, plus text/code, JSON, CSV, images, PDFs, Google Docs, Sheets, Slides, and Drawings.
+- Previews Markdown with YAML Front Matter metadata, fenced-code syntax highlighting, plus text/code, JSON, CSV, images, PDFs, Google Docs, Sheets, Slides, and Drawings.
 - Uses a clean file-list + preview layout by default.
 - Uses compact single-line file rows with consistently sized Simple Icons brand vectors for Google Workspace and Markdown.
 - Enters a three-pane file/editor/preview workspace only while editing Markdown; the file pane can be collapsed.
@@ -21,6 +21,7 @@ An Android 16, tablet-first Markdown editor that uses Google Drive as its storag
 - Optimistic conflict protection when Drive returns an ETag.
 - Keeps cached Markdown read-only until Drive revision validation finishes; failed validation never silently unlocks editing.
 - Reveals one fixed-width delete action by swiping a row from right to left; the row can be swiped right to close it. Long-press enters checkbox-based multi-select. Every single or batch deletion requires confirmation, and Drive items are moved to Trash rather than permanently erased.
+- Moves checkbox-selected files, folders, and unsynced local Markdown drafts through a My Drive folder picker. An open document remains editable after it is moved.
 - Signed APK releases produced only by GitHub Actions.
 
 ## Google Cloud setup
