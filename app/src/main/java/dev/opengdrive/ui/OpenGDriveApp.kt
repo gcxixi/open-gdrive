@@ -4,8 +4,14 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
+import android.text.Spanned
 import android.text.method.LinkMovementMethod
 import android.widget.TextView
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.animate
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -14,6 +20,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,21 +36,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Add
@@ -68,6 +72,7 @@ import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Slideshow
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.Sync
@@ -88,6 +93,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -101,7 +108,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
@@ -109,8 +115,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import compose.icons.SimpleIcons
@@ -144,6 +152,7 @@ import java.time.format.FormatStyle
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -161,14 +170,6 @@ fun OpenGDriveApp(viewModel: OpenGDriveViewModel, onAuthorize: () -> Unit) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         snackbarHost = { SnackbarHost(snackbar) },
-        topBar = {
-            CompactHeader(
-                state = state,
-                onToggleFilePane = viewModel::toggleFilePane,
-                onTogglePreviewPane = viewModel::togglePreviewPane,
-                onRefresh = viewModel::refresh,
-            )
-        },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             if (!state.authorized) {
@@ -184,6 +185,14 @@ fun OpenGDriveApp(viewModel: OpenGDriveViewModel, onAuthorize: () -> Unit) {
                     onCreate = viewModel::createMarkdown,
                     onRename = viewModel::renameMarkdown,
                     onDelete = viewModel::deleteFiles,
+                    onMove = viewModel::startMove,
+                    onToggleFilePane = viewModel::toggleFilePane,
+                    onTogglePreviewPane = viewModel::togglePreviewPane,
+                    onRefresh = viewModel::refresh,
+                    onCancelMove = viewModel::cancelMove,
+                    onMoveInto = viewModel::navigateMoveInto,
+                    onMovePathClick = viewModel::navigateMoveToPath,
+                    onConfirmMove = viewModel::confirmMove,
                 )
             }
             if (state.loading) {
@@ -193,49 +202,6 @@ fun OpenGDriveApp(viewModel: OpenGDriveViewModel, onAuthorize: () -> Unit) {
                     modifier = Modifier.align(Alignment.Center),
                 ) {
                     CircularProgressIndicator(Modifier.padding(20.dp).size(30.dp), strokeWidth = 3.dp)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CompactHeader(
-    state: EditorState,
-    onToggleFilePane: () -> Unit,
-    onTogglePreviewPane: () -> Unit,
-    onRefresh: () -> Unit,
-) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .height(48.dp)
-                .padding(end = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Spacer(Modifier.weight(1f))
-            if (state.authorized) {
-                if (state.editMode || state.saveState != SaveState.Saved) SaveIndicator(state.saveState)
-                if (state.selected != null) {
-                    IconButton(onClick = onToggleFilePane) {
-                        Icon(
-                            if (state.filePaneVisible) Icons.Default.MenuOpen else Icons.Default.FolderOpen,
-                            contentDescription = if (state.filePaneVisible) "Hide file list" else "Show file list",
-                        )
-                    }
-                }
-                if (state.editMode) {
-                    IconButton(onClick = onTogglePreviewPane) {
-                        Icon(
-                            if (state.previewPaneVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                            contentDescription = if (state.previewPaneVisible) "Hide preview" else "Show preview",
-                        )
-                    }
-                }
-                IconButton(onClick = onRefresh) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Refresh files")
                 }
             }
         }
@@ -285,8 +251,17 @@ private fun Workspace(
     onCreate: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: (List<DriveFile>) -> Unit,
+    onMove: (List<DriveFile>) -> Unit,
+    onToggleFilePane: () -> Unit,
+    onTogglePreviewPane: () -> Unit,
+    onRefresh: () -> Unit,
+    onCancelMove: () -> Unit,
+    onMoveInto: (DriveFile) -> Unit,
+    onMovePathClick: (Int) -> Unit,
+    onConfirmMove: () -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
+        val toolbarReservedWidth = 0.dp
         if (maxWidth >= 840.dp) {
             Row(
                 Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer).padding(12.dp),
@@ -302,14 +277,31 @@ private fun Workspace(
                         onPathClick = onPathClick,
                         onCreate = onCreate,
                         onDelete = onDelete,
+                        onMove = onMove,
+                        refreshing = state.refreshing,
+                        onRefresh = onRefresh,
+                        toolbarReservedWidth = 0.dp,
                         modifier = Modifier.width(if (state.editMode) 300.dp else 340.dp),
                     )
                 }
                 if (state.editMode) {
-                    EditorPane(state, onEdit, onToggleEdit, onSave, onRename, Modifier.weight(1f))
+                    EditorPane(
+                        state,
+                        onEdit,
+                        onToggleEdit,
+                        onSave,
+                        onRename,
+                        toolbarReservedWidth = if (state.previewPaneVisible) 0.dp else toolbarReservedWidth,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
                 if (!state.editMode || state.previewPaneVisible) {
-                    PreviewPane(state, onToggleEdit, Modifier.weight(1f))
+                    PreviewPane(
+                        state,
+                        onToggleEdit,
+                        toolbarReservedWidth = toolbarReservedWidth,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
             }
         } else {
@@ -323,11 +315,161 @@ private fun Workspace(
                 onCreate,
                 onRename,
                 onDelete,
+                onMove,
+                state.refreshing,
+                onRefresh,
+                toolbarReservedWidth,
+            )
+        }
+        FloatingWorkspaceToolbar(
+            state = state,
+            onToggleFilePane = onToggleFilePane,
+            onTogglePreviewPane = onTogglePreviewPane,
+            onRefresh = onRefresh,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 18.dp, bottom = 18.dp),
+        )
+        state.moveDestination?.let { picker ->
+            MoveDestinationDialog(
+                state = picker,
+                onDismiss = onCancelMove,
+                onFolderClick = onMoveInto,
+                onPathClick = onMovePathClick,
+                onConfirm = onConfirmMove,
             )
         }
     }
 }
 
+@Composable
+private fun FloatingWorkspaceToolbar(
+    state: EditorState,
+    onToggleFilePane: () -> Unit,
+    onTogglePreviewPane: () -> Unit,
+    onRefresh: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn() + scaleIn(transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 1f)),
+            exit = fadeOut() + scaleOut(transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 1f)),
+        ) {
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                if (
+                    state.editMode ||
+                    state.localSaveState != LocalSaveState.Saved ||
+                    state.saveState != SaveState.Saved
+                ) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shape = CircleShape,
+                        tonalElevation = 3.dp,
+                        shadowElevation = 8.dp,
+                    ) {
+                        SaveIndicator(state.localSaveState, state.saveState)
+                    }
+                }
+                if (state.selected != null) {
+                    FloatingToolbarButton(
+                        icon = if (state.filePaneVisible) Icons.Default.MenuOpen else Icons.Default.FolderOpen,
+                        description = if (state.filePaneVisible) "Hide file list" else "Show file list",
+                        onClick = {
+                            expanded = false
+                            onToggleFilePane()
+                        },
+                    )
+                }
+                if (state.editMode) {
+                    FloatingToolbarButton(
+                        icon = if (state.previewPaneVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                        description = if (state.previewPaneVisible) "Hide preview" else "Show preview",
+                        onClick = {
+                            expanded = false
+                            onTogglePreviewPane()
+                        },
+                    )
+                }
+                FloatingToolbarButton(
+                    icon = Icons.Default.Refresh,
+                    description = "Refresh files",
+                    onClick = {
+                        expanded = false
+                        onRefresh()
+                    },
+                )
+            }
+        }
+        Surface(
+            color = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            shape = CircleShape,
+            tonalElevation = 6.dp,
+            shadowElevation = 14.dp,
+            modifier = Modifier.size(44.dp),
+        ) {
+            Box(Modifier.fillMaxSize()) {
+                IconButton(onClick = { expanded = !expanded }, modifier = Modifier.fillMaxSize()) {
+                    Icon(
+                        Icons.Default.Settings,
+                        contentDescription = if (expanded) "Close workspace controls" else "Open workspace controls",
+                        modifier = Modifier.size(21.dp),
+                    )
+                }
+                SaveStateBadge(
+                    state.localSaveState,
+                    state.saveState,
+                    Modifier.align(Alignment.TopEnd).padding(3.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FloatingToolbarButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    onClick: () -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = CircleShape,
+        tonalElevation = 4.dp,
+        shadowElevation = 12.dp,
+        modifier = Modifier.size(38.dp),
+    ) {
+        IconButton(onClick = onClick, modifier = Modifier.fillMaxSize()) {
+            Icon(icon, contentDescription = description, modifier = Modifier.size(19.dp))
+        }
+    }
+}
+
+@Composable
+private fun SaveStateBadge(
+    localSaveState: LocalSaveState,
+    saveState: SaveState,
+    modifier: Modifier = Modifier,
+) {
+    if (localSaveState == LocalSaveState.Saved && saveState == SaveState.Saved) return
+    val color = when {
+        saveState == SaveState.Failed -> MaterialTheme.colorScheme.error
+        localSaveState == LocalSaveState.Saving || saveState == SaveState.Saving -> MaterialTheme.colorScheme.primary
+        saveState == SaveState.Pending -> MaterialTheme.colorScheme.tertiary
+        else -> Color.Transparent
+    }
+    Box(modifier.size(9.dp).clip(CircleShape).background(color))
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FilePane(
     files: List<DriveFile>,
@@ -338,6 +480,10 @@ private fun FilePane(
     onPathClick: (Int) -> Unit,
     onCreate: () -> Unit,
     onDelete: (List<DriveFile>) -> Unit,
+    onMove: (List<DriveFile>) -> Unit,
+    refreshing: Boolean,
+    onRefresh: () -> Unit,
+    toolbarReservedWidth: Dp,
     modifier: Modifier = Modifier,
 ) {
     var selectedIds by remember(path) { mutableStateOf(emptySet<String>()) }
@@ -358,48 +504,59 @@ private fun FilePane(
                     count = selectedIds.size,
                     onClose = { selectedIds = emptySet() },
                     onDelete = { deleteRequest = files.filter { it.id in selectedIds } },
+                    onMove = {
+                        onMove(files.filter { it.id in selectedIds })
+                        selectedIds = emptySet()
+                    },
+                    toolbarReservedWidth = toolbarReservedWidth,
                 )
             } else {
-                Breadcrumbs(path, onPathClick, onCreate)
+                Breadcrumbs(path, onPathClick, onCreate, toolbarReservedWidth)
             }
-            if (files.isEmpty()) {
-                Column(
-                    Modifier.fillMaxSize().padding(28.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Icon(
-                        Icons.Default.FolderOpen,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.outline,
-                        modifier = Modifier.size(42.dp),
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Text("This folder is empty", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            } else {
-                LazyColumn(Modifier.fillMaxSize()) {
-                    items(files, key = { it.id }) { file ->
-                        SwipeFileRow(
-                            file = file,
-                            selected = file.id == selectedId,
-                            checked = file.id in selectedIds,
-                            selectionMode = selectionMode,
-                            syncState = syncStates[file.id],
-                            onClick = {
-                                if (selectionMode) {
-                                    selectedIds = if (file.id in selectedIds) {
-                                        selectedIds - file.id
-                                    } else {
-                                        selectedIds + file.id
-                                    }
-                                } else {
-                                    onSelect(file)
-                                }
-                            },
-                            onLongClick = { selectedIds = selectedIds + file.id },
-                            onRequestDelete = { deleteRequest = listOf(file) },
+            PullToRefreshBox(
+                isRefreshing = refreshing,
+                onRefresh = onRefresh,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                if (files.isEmpty()) {
+                    Column(
+                        Modifier.fillMaxSize().padding(28.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(
+                            Icons.Default.FolderOpen,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.size(42.dp),
                         )
+                        Spacer(Modifier.height(12.dp))
+                        Text("This folder is empty", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    LazyColumn(Modifier.fillMaxSize()) {
+                        items(files, key = { it.id }) { file ->
+                            SwipeFileRow(
+                                file = file,
+                                selected = file.id == selectedId,
+                                checked = file.id in selectedIds,
+                                selectionMode = selectionMode,
+                                syncState = syncStates[file.id],
+                                onClick = {
+                                    if (selectionMode) {
+                                        selectedIds = if (file.id in selectedIds) {
+                                            selectedIds - file.id
+                                        } else {
+                                            selectedIds + file.id
+                                        }
+                                    } else {
+                                        onSelect(file)
+                                    }
+                                },
+                                onLongClick = { selectedIds = selectedIds + file.id },
+                                onRequestDelete = { deleteRequest = listOf(file) },
+                            )
+                        }
                     }
                 }
             }
@@ -419,13 +576,25 @@ private fun FilePane(
 }
 
 @Composable
-private fun SelectionToolbar(count: Int, onClose: () -> Unit, onDelete: () -> Unit) {
+private fun SelectionToolbar(
+    count: Int,
+    onClose: () -> Unit,
+    onDelete: () -> Unit,
+    onMove: () -> Unit,
+    toolbarReservedWidth: Dp,
+) {
     Row(
-        Modifier.fillMaxWidth().height(76.dp).padding(horizontal = 8.dp),
+        Modifier
+            .fillMaxWidth()
+            .height(76.dp)
+            .padding(start = 8.dp, end = 8.dp + toolbarReservedWidth),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Exit selection") }
         Text("$count selected", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+        IconButton(onClick = onMove) {
+            Icon(Icons.AutoMirrored.Filled.DriveFileMove, contentDescription = "Move selected")
+        }
         IconButton(onClick = onDelete) {
             Icon(Icons.Default.Delete, contentDescription = "Delete selected", tint = MaterialTheme.colorScheme.error)
         }
@@ -514,8 +683,17 @@ private fun SwipeFileRow(
 }
 
 @Composable
-private fun Breadcrumbs(path: List<DriveFolder>, onPathClick: (Int) -> Unit, onCreate: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
+private fun Breadcrumbs(
+    path: List<DriveFolder>,
+    onPathClick: (Int) -> Unit,
+    onCreate: () -> Unit,
+    toolbarReservedWidth: Dp,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp + toolbarReservedWidth, top = 14.dp, bottom = 14.dp),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 "FILES",
@@ -640,9 +818,95 @@ private fun DeleteConfirmationDialog(
 }
 
 @Composable
+private fun MoveDestinationDialog(
+    state: MoveDestinationState,
+    onDismiss: () -> Unit,
+    onFolderClick: (DriveFile) -> Unit,
+    onPathClick: (Int) -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = { if (!state.moving) onDismiss() },
+        title = { Text("Move ${state.targets.size} item${if (state.targets.size == 1) "" else "s"}") },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    state.path.forEachIndexed { index, folder ->
+                        TextButton(
+                            onClick = { onPathClick(index) },
+                            enabled = !state.moving && index != state.path.lastIndex,
+                        ) {
+                            Text(folder.name, maxLines = 1)
+                        }
+                        if (index != state.path.lastIndex) {
+                            Icon(Icons.Default.ChevronRight, null, Modifier.size(17.dp))
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().height(300.dp),
+                ) {
+                    when {
+                        state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+                        }
+                        state.folders.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("No subfolders", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        else -> LazyColumn(Modifier.fillMaxSize().padding(vertical = 6.dp)) {
+                            items(state.folders, key = DriveFile::id) { folder ->
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .clickable(enabled = !state.moving) { onFolderClick(folder) }
+                                        .padding(horizontal = 14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    FileTypeIcon(folder)
+                                    Text(
+                                        folder.name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
+                                    )
+                                    Icon(Icons.Default.ChevronRight, null, Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Destination: ${state.path.last().name}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, enabled = !state.loading && !state.moving) {
+                Text("Move here")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !state.moving) { Text("Cancel") }
+        },
+    )
+}
+
+@Composable
 private fun PreviewPane(
     state: EditorState,
     onToggleEdit: () -> Unit,
+    toolbarReservedWidth: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -658,7 +922,10 @@ private fun PreviewPane(
                 return@Column
             }
             Row(
-                Modifier.fillMaxWidth().height(68.dp).padding(horizontal = 22.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .height(68.dp)
+                    .padding(start = 22.dp, end = 22.dp + toolbarReservedWidth),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
@@ -716,9 +983,17 @@ private fun EditorPane(
     onToggleEdit: () -> Unit,
     onSave: () -> Unit,
     onRename: (String) -> Unit,
+    toolbarReservedWidth: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
     var showRename by remember(state.selected?.file?.id) { mutableStateOf(false) }
+    val documentId = state.selected?.file?.id ?: "editor"
+    val editorController = remember(documentId) { MarkdownEditorController() }
+    val editorBackground = MaterialTheme.colorScheme.surface
+    val editorText = MaterialTheme.colorScheme.onSurface
+    val editorSecondaryText = MaterialTheme.colorScheme.onSurfaceVariant
+    val editorCursor = MaterialTheme.colorScheme.primary
+    val editorSelection = MaterialTheme.colorScheme.primaryContainer
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(20.dp),
@@ -727,7 +1002,10 @@ private fun EditorPane(
     ) {
         Column(Modifier.fillMaxSize()) {
             Row(
-                Modifier.fillMaxWidth().height(68.dp).padding(horizontal = 16.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .height(68.dp)
+                    .padding(start = 16.dp, end = 16.dp + toolbarReservedWidth),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -740,30 +1018,32 @@ private fun EditorPane(
                 IconButton(onClick = { showRename = true }) {
                     Icon(Icons.Default.DriveFileRenameOutline, contentDescription = "Rename Markdown")
                 }
-                IconButton(onClick = onSave) { Icon(Icons.Default.Save, contentDescription = "Save now") }
-                TextButton(onClick = onToggleEdit) {
+                IconButton(
+                    onClick = {
+                        editorController.flush(onEdit)
+                        onSave()
+                    },
+                ) { Icon(Icons.Default.Save, contentDescription = "Save now") }
+                TextButton(onClick = {
+                    editorController.flush(onEdit)
+                    onToggleEdit()
+                }) {
                     Icon(Icons.Default.Check, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Done")
                 }
             }
-            BasicTextField(
-                value = state.markdown,
-                onValueChange = onEdit,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                    color = MaterialTheme.colorScheme.onSurface,
-                    lineHeight = 25.sp,
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 18.dp),
-                decorationBox = { inner ->
-                    Box(Modifier.fillMaxSize()) {
-                        if (state.markdown.isEmpty()) {
-                            Text("Start writing…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        inner()
-                    }
-                },
+            MarkdownCodeEditor(
+                documentId = documentId,
+                initialText = state.markdown,
+                controller = editorController,
+                onSnapshot = onEdit,
+                backgroundColor = editorBackground,
+                textColor = editorText,
+                secondaryTextColor = editorSecondaryText,
+                cursorColor = editorCursor,
+                selectionColor = editorSelection,
+                modifier = Modifier.fillMaxSize(),
             )
         }
     }
@@ -842,7 +1122,41 @@ private fun MarkdownPreview(markdown: String, modifier: Modifier = Modifier) {
             .build()
     }
     val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
+    val parts = remember(markdown) { splitMarkdownFrontMatter(markdown) }
+    val renderedMarkdown by produceState<Spanned?>(initialValue = null, markwon, parts.body) {
+        delay(markdownPreviewDelay(parts.body.length))
+        value = withContext(Dispatchers.Default) {
+            val source = parts.body.ifBlank { "*Empty document*" }
+            markwon.render(markwon.parse(source))
+        }
+    }
     Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = 28.dp, vertical = 22.dp)) {
+        parts.frontMatter?.let { metadata ->
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 13.dp)) {
+                    Text(
+                        "META",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    if (metadata.isNotBlank()) {
+                        Spacer(Modifier.height(7.dp))
+                        SelectionContainer {
+                            Text(
+                                metadata,
+                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(18.dp))
+        }
         AndroidView(
             factory = {
                 TextView(it).apply {
@@ -855,11 +1169,19 @@ private fun MarkdownPreview(markdown: String, modifier: Modifier = Modifier) {
             },
             update = { view ->
                 view.setTextColor(textColor)
-                markwon.setMarkdown(view, markdown.ifBlank { "*Empty document*" })
+                renderedMarkdown?.let { rendered ->
+                    if (view.text !== rendered) markwon.setParsedMarkdown(view, rendered)
+                }
             },
             modifier = Modifier.fillMaxWidth(),
         )
     }
+}
+
+private fun markdownPreviewDelay(length: Int): Long = when {
+    length >= 1_000_000 -> 1_500L
+    length >= 250_000 -> 800L
+    else -> 250L
 }
 
 @Composable
@@ -1030,6 +1352,10 @@ private fun CompactWorkspace(
     onCreate: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: (List<DriveFile>) -> Unit,
+    onMove: (List<DriveFile>) -> Unit,
+    refreshing: Boolean,
+    onRefresh: () -> Unit,
+    toolbarReservedWidth: Dp,
 ) {
     var showFiles by remember(state.folderPath) { mutableStateOf(state.selected == null) }
     if (showFiles || state.selected == null) {
@@ -1048,6 +1374,10 @@ private fun CompactWorkspace(
                 showFiles = false
             },
             onDelete = onDelete,
+            onMove = onMove,
+            refreshing = refreshing,
+            onRefresh = onRefresh,
+            toolbarReservedWidth = toolbarReservedWidth,
             modifier = Modifier.fillMaxSize(),
         )
     } else {
@@ -1058,25 +1388,44 @@ private fun CompactWorkspace(
                 Text("Files")
             }
             if (state.editMode) {
-                EditorPane(state, onEdit, onToggleEdit, onSave, onRename, Modifier.weight(1f))
+                EditorPane(
+                    state,
+                    onEdit,
+                    onToggleEdit,
+                    onSave,
+                    onRename,
+                    toolbarReservedWidth = toolbarReservedWidth,
+                    modifier = Modifier.weight(1f),
+                )
             } else {
-                PreviewPane(state, onToggleEdit, Modifier.weight(1f))
+                PreviewPane(
+                    state,
+                    onToggleEdit,
+                    toolbarReservedWidth = toolbarReservedWidth,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
     }
 }
 
 @Composable
-private fun SaveIndicator(saveState: SaveState) {
-    val (icon, text) = when (saveState) {
+private fun SaveIndicator(localSaveState: LocalSaveState, saveState: SaveState) {
+    val (icon, text) = if (localSaveState == LocalSaveState.Saving) {
+        Icons.Default.Save to "Saving locally"
+    } else when (saveState) {
         SaveState.Saved -> Icons.Default.CloudDone to "Synced"
         SaveState.Pending -> Icons.Default.CloudUpload to "Saved locally"
         SaveState.Saving -> Icons.Default.Sync to "Syncing"
         SaveState.Failed -> Icons.Default.ErrorOutline to "Sync issue"
     }
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp)) {
-        val color = if (saveState == SaveState.Failed) MaterialTheme.colorScheme.error
-        else MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
+    ) {
+        val color = if (localSaveState == LocalSaveState.Saved && saveState == SaveState.Failed) {
+            MaterialTheme.colorScheme.error
+        } else MaterialTheme.colorScheme.onSurfaceVariant
         Icon(icon, contentDescription = text, tint = color, modifier = Modifier.size(17.dp))
         Spacer(Modifier.width(5.dp))
         Text(text, style = MaterialTheme.typography.labelMedium, color = color)

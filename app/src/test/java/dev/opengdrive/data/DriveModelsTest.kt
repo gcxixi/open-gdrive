@@ -42,6 +42,10 @@ class DriveModelsTest {
             "trashed = false and 'folder\\'id' in parents",
             DriveApi.childQuery("folder'id"),
         )
+        assertEquals(
+            "trashed = false and 'root' in parents and mimeType = '$GOOGLE_FOLDER'",
+            DriveApi.childQuery("root", foldersOnly = true),
+        )
     }
 
     @Test fun `Drive response parser is independent of reflected model names`() {
@@ -74,6 +78,14 @@ class DriveModelsTest {
         assertTrue(page.files.first().isFolder())
         assertTrue(page.files.last().isMarkdown())
         assertEquals("42", page.files.last().size)
+    }
+
+    @Test fun `Drive response parser keeps parent ids for move operations`() {
+        val file = DriveApi.parseDriveFileJson(
+            """{"id":"note-1","name":"note.md","parents":["old-folder"]}""",
+        )!!
+
+        assertEquals(listOf("old-folder"), file.parents)
     }
 
     @Test fun `new markdown metadata escapes names and omits parent for all files view`() {

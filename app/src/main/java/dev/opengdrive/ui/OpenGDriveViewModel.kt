@@ -33,12 +33,15 @@ data class EditorState(
     val selected: OpenDriveFile? = null,
     val markdown: String = "",
     val loading: Boolean = false,
+    val refreshing: Boolean = false,
+    val localSaveState: LocalSaveState = LocalSaveState.Saved,
     val saveState: SaveState = SaveState.Saved,
     val fileSyncStates: Map<String, SaveState> = emptyMap(),
     val editMode: Boolean = false,
     val filePaneVisible: Boolean = true,
     val previewPaneVisible: Boolean = true,
     val validationState: ValidationState = ValidationState.Ready,
+    val moveDestination: MoveDestinationState? = null,
     val message: String? = null,
 ) {
     val isEditableMarkdown: Boolean
@@ -48,7 +51,16 @@ data class EditorState(
         get() = isEditableMarkdown && validationState == ValidationState.Ready
 }
 
+data class MoveDestinationState(
+    val targets: List<DriveFile>,
+    val path: List<DriveFolder> = listOf(DriveFolder("root", "My Drive")),
+    val folders: List<DriveFile> = emptyList(),
+    val loading: Boolean = true,
+    val moving: Boolean = false,
+)
+
 enum class SaveState { Saved, Pending, Saving, Failed }
+enum class LocalSaveState { Saved, Saving }
 enum class ValidationState { Ready, Checking, Failed }
 
 class OpenGDriveViewModel(application: Application) : AndroidViewModel(application) {
@@ -60,6 +72,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
     private val previewCache = PreviewCacheStore(File(application.cacheDir, "file-previews"))
     private val folderCache = FolderFileCache()
     private val syncJobs = mutableMapOf<String, Job>()
+    private val syncRetryAttempts = mutableMapOf<String, Int>()
     private val syncingDrafts = mutableSetOf<String>()
     private var localSaveJob: Job? = null
     private var openJob: Job? = null
@@ -98,6 +111,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                 editMode = true,
                 previewPaneVisible = true,
                 validationState = ValidationState.Ready,
+                localSaveState = LocalSaveState.Saved,
                 saveState = SaveState.Pending,
                 fileSyncStates = current.fileSyncStates + (file.id to SaveState.Pending),
                 message = null,
@@ -122,10 +136,12 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
             syncError = null,
         )
         activeDraft = updated
+        syncRetryAttempts.remove(updated.localId)
         val displayId = current.selected?.file?.id ?: updated.displayId()
         state.value = current.copy(
             files = current.files.map { if (it.id == displayId) it.copy(name = normalized) else it },
             selected = current.selected?.let { it.copy(file = it.file.copy(name = normalized)) },
+            localSaveState = LocalSaveState.Saving,
             saveState = SaveState.Pending,
             fileSyncStates = current.fileSyncStates + (displayId to SaveState.Pending),
             message = null,
@@ -206,6 +222,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                 markdown = if (selectedDeleted) "" else current.markdown,
                 loading = false,
                 editMode = if (selectedDeleted) false else current.editMode,
+                localSaveState = if (selectedDeleted) LocalSaveState.Saved else current.localSaveState,
                 saveState = if (selectedDeleted) SaveState.Saved else current.saveState,
                 fileSyncStates = current.fileSyncStates.filterKeys { it !in deletedIds },
                 validationState = if (selectedDeleted) {
@@ -217,6 +234,147 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                     failures.isEmpty() -> "Deleted $successCount item${if (successCount == 1) "" else "s"}; Drive items are in Trash"
                     successCount == 0 -> "Delete failed: ${failures.first()}"
                     else -> "Deleted $successCount; ${failures.size} failed: ${failures.first()}"
+                },
+            )
+        }
+    }
+
+    fun startMove(files: List<DriveFile>) {
+        val targets = files.distinctBy(DriveFile::id)
+        if (targets.isEmpty()) return
+        val picker = MoveDestinationState(targets = targets)
+        state.value = state.value.copy(moveDestination = picker, message = null)
+        loadMoveFolders(picker.path.last())
+    }
+
+    fun cancelMove() {
+        state.value = state.value.copy(moveDestination = null)
+    }
+
+    fun navigateMoveInto(folder: DriveFile) {
+        if (!folder.isFolder()) return
+        val picker = state.value.moveDestination ?: return
+        val destination = DriveFolder(folder.id, folder.name)
+        state.value = state.value.copy(
+            moveDestination = picker.copy(
+                path = picker.path + destination,
+                folders = emptyList(),
+                loading = true,
+            ),
+        )
+        loadMoveFolders(destination)
+    }
+
+    fun navigateMoveToPath(index: Int) {
+        val picker = state.value.moveDestination ?: return
+        if (index !in picker.path.indices || index == picker.path.lastIndex) return
+        val path = picker.path.take(index + 1)
+        state.value = state.value.copy(
+            moveDestination = picker.copy(path = path, folders = emptyList(), loading = true),
+        )
+        loadMoveFolders(path.last())
+    }
+
+    fun confirmMove() {
+        val picker = state.value.moveDestination ?: return
+        val token = accessToken ?: return
+        val destination = picker.path.last()
+        viewModelScope.launch {
+            state.value = state.value.copy(
+                moveDestination = picker.copy(loading = true, moving = true),
+                message = null,
+            )
+            flushLocalSave(scheduleRemoteSync = false)
+            val documents = withContext(Dispatchers.IO) {
+                picker.targets.associateWith { file ->
+                    if (file.id.startsWith(LOCAL_FILE_PREFIX)) {
+                        localStore.find(file.id.removePrefix(LOCAL_FILE_PREFIX))
+                    } else {
+                        localStore.findByDriveId(file.id)
+                    }
+                }
+            }
+            documents.values.filterNotNull().forEach { document ->
+                syncJobs.remove(document.localId)?.let { job ->
+                    if (document.localId in syncingDrafts) job.join() else {
+                        job.cancel()
+                        job.join()
+                    }
+                }
+            }
+            val latestDocuments = withContext(Dispatchers.IO) {
+                documents.mapValues { (_, document) -> document?.let { localStore.find(it.localId) } }
+            }
+            val movedIds = mutableSetOf<String>()
+            val movedFiles = mutableMapOf<String, DriveFile>()
+            val documentsToResume = mutableListOf<LocalMarkdownDocument>()
+            val failures = mutableListOf<String>()
+            var successCount = 0
+            picker.targets.forEach { file ->
+                try {
+                    val document = latestDocuments[file]
+                    val remoteId = document?.driveFileId ?: file.id.takeUnless { it.startsWith(LOCAL_FILE_PREFIX) }
+                    val movedRemote = remoteId?.let {
+                        driveApi.move(file.copy(id = it), destination.id, token)
+                    }
+                    var movedDocument = document?.let {
+                        withContext(Dispatchers.IO) { localStore.updateParent(it.localId, destination.id) }
+                    }
+                    val active = activeDraft
+                    if (active != null && active.localId == movedDocument?.localId) {
+                        // A delayed Sora snapshot may arrive while the Drive move is in flight.
+                        // Persist that newest in-memory revision with the new parent before resuming sync.
+                        localSaveJob?.cancel()
+                        localSaveJob = null
+                        syncJobs.remove(active.localId)?.cancel()
+                        movedDocument = withContext(Dispatchers.IO) {
+                            localStore.save(active.copy(parentId = destination.id))
+                        }
+                        activeDraft = movedDocument
+                    }
+                    movedDocument?.let(documentsToResume::add)
+                    val movedFile = movedRemote ?: file.copy(parents = listOf(destination.id))
+                    movedIds += file.id
+                    movedFiles[file.id] = movedFile
+                    // A create already in flight can replace a local row ID while this move waits.
+                    // Track both identities so the current list and open selection update atomically.
+                    remoteId?.let {
+                        movedIds += it
+                        movedFiles[it] = movedFile
+                    }
+                    successCount++
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    if (error is DriveException.Unauthorized) accessToken = null
+                    latestDocuments[file]?.let(documentsToResume::add)
+                    failures += "${file.name}: ${error.message ?: "move failed"}"
+                }
+            }
+            documentsToResume.distinctBy(LocalMarkdownDocument::localId)
+                .filter(LocalMarkdownDocument::dirty)
+                .forEach { scheduleSync(it.localId, if (it.driveFileId == null) 0 else REMOTE_SYNC_IDLE_MS) }
+            folderCache.clear()
+            val current = state.value
+            val currentFolderId = current.folderPath.last().id
+            val staysVisible = currentFolderId == "all" || currentFolderId == destination.id
+            state.value = current.copy(
+                authorized = accessToken != null,
+                files = if (staysVisible) {
+                    sortFiles(current.files.map { movedFiles[it.id] ?: it })
+                } else {
+                    current.files.filterNot { it.id in movedIds }
+                },
+                // Keep an open document active even after its row leaves this folder. This lets
+                // Sora flush any not-yet-snapshotted keystrokes without losing the editing session.
+                selected = current.selected?.let { opened ->
+                    movedFiles[opened.file.id]?.let { opened.copy(file = it) } ?: opened
+                },
+                moveDestination = null,
+                message = when {
+                    failures.isEmpty() -> "Moved $successCount item${if (successCount == 1) "" else "s"} to ${destination.name}"
+                    successCount == 0 -> "Move failed: ${failures.first()}"
+                    else -> "Moved $successCount; ${failures.size} failed: ${failures.first()}"
                 },
             )
         }
@@ -235,6 +393,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                 selected = null,
                 markdown = "",
                 editMode = false,
+                localSaveState = LocalSaveState.Saved,
                 saveState = SaveState.Saved,
                 validationState = ValidationState.Ready,
             )
@@ -267,6 +426,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                     markdown = local.content,
                     loading = false,
                     editMode = false,
+                    localSaveState = LocalSaveState.Saved,
                     saveState = local.saveState(),
                     validationState = ValidationState.Ready,
                     message = null,
@@ -289,6 +449,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                     markdown = local.content,
                     loading = false,
                     editMode = false,
+                    localSaveState = LocalSaveState.Saved,
                     saveState = local.saveState(),
                     validationState = ValidationState.Checking,
                     message = null,
@@ -327,6 +488,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                     markdown = (cached.preview as? PreviewData.Markdown)?.text.orEmpty(),
                     loading = false,
                     editMode = false,
+                    localSaveState = LocalSaveState.Saved,
                     saveState = local?.saveState() ?: SaveState.Saved,
                     validationState = ValidationState.Checking,
                     message = null,
@@ -364,6 +526,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                         selected = OpenDriveFile(localFile, PreviewData.Markdown(local.content), local.etag),
                         markdown = local.content,
                         loading = false,
+                        localSaveState = LocalSaveState.Saved,
                         saveState = local.saveState(),
                         validationState = ValidationState.Failed,
                         message = "Showing the local copy; Drive is unavailable",
@@ -406,13 +569,15 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
             syncError = null,
         )
         activeDraft = updated
+        syncRetryAttempts.remove(updated.localId)
         val displayId = current.selected?.file?.id ?: updated.displayId()
         state.value = current.copy(
             markdown = markdown,
+            localSaveState = LocalSaveState.Saving,
             saveState = SaveState.Pending,
             fileSyncStates = current.fileSyncStates + (displayId to SaveState.Pending),
         )
-        persistAndSchedule(updated, AUTOSAVE_INTERVAL_MS)
+        persistAndSchedule(updated, REMOTE_SYNC_IDLE_MS)
     }
 
     fun save() {
@@ -437,6 +602,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                 selected = null,
                 markdown = "",
                 editMode = false,
+                localSaveState = LocalSaveState.Saved,
                 saveState = SaveState.Saved,
                 validationState = ValidationState.Ready,
             )
@@ -453,7 +619,13 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
         viewModelScope.launch {
-            state.value = state.value.copy(files = emptyList(), loading = true, message = null)
+            val keepCurrentList = forceRefresh && state.value.files.isNotEmpty()
+            state.value = state.value.copy(
+                files = if (keepCurrentList) state.value.files else emptyList(),
+                loading = !keepCurrentList,
+                refreshing = keepCurrentList,
+                message = null,
+            )
             runCatching { driveApi.listFiles(token, folder.id) }
                 .onSuccess { files ->
                     folderCache.put(folder.id, files)
@@ -480,8 +652,37 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
             files = sortFiles(merged.distinctBy(DriveFile::id)),
             fileSyncStates = syncStates,
             loading = false,
+            refreshing = false,
             message = null,
         )
+    }
+
+    private fun loadMoveFolders(folder: DriveFolder) {
+        val token = accessToken ?: return
+        viewModelScope.launch {
+            runCatching { driveApi.listFolders(token, folder.id) }
+                .onSuccess { folders ->
+                    val current = state.value.moveDestination ?: return@onSuccess
+                    if (current.path.last().id != folder.id) return@onSuccess
+                    val targetIds = current.targets.map(DriveFile::id).toSet()
+                    state.value = state.value.copy(
+                        moveDestination = current.copy(
+                            folders = sortFiles(folders.filterNot { it.id in targetIds }),
+                            loading = false,
+                        ),
+                    )
+                }
+                .onFailure { error ->
+                    if (error is DriveException.Unauthorized) accessToken = null
+                    val current = state.value.moveDestination ?: return@onFailure
+                    if (current.path.last().id != folder.id) return@onFailure
+                    state.value = state.value.copy(
+                        authorized = accessToken != null,
+                        moveDestination = current.copy(loading = false),
+                        message = error.message ?: "Could not load Drive folders",
+                    )
+                }
+        }
     }
 
     private suspend fun applyOpenedFile(opened: OpenDriveFile) {
@@ -503,6 +704,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
             selected = opened,
             markdown = markdown?.text.orEmpty(),
             loading = false,
+            localSaveState = LocalSaveState.Saved,
             saveState = SaveState.Saved,
             validationState = ValidationState.Ready,
             message = null,
@@ -523,18 +725,20 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
         localSaveJob?.cancel()
         localSaveJob = viewModelScope.launch {
             delay(LOCAL_SAVE_DEBOUNCE_MS)
-            withContext(Dispatchers.IO) { localStore.save(document) }
+            val saved = withContext(Dispatchers.IO) { localStore.save(document) }
+            markLocalSaved(saved)
             localSaveJob = null
             scheduleSync(document.localId, syncDelay)
         }
     }
 
-    private suspend fun flushLocalSave() {
+    private suspend fun flushLocalSave(scheduleRemoteSync: Boolean = true) {
         localSaveJob?.cancel()
         localSaveJob = null
         val document = activeDraft ?: return
-        withContext(Dispatchers.IO) { localStore.save(document) }
-        if (document.dirty) scheduleSync(document.localId, 0)
+        val saved = withContext(Dispatchers.IO) { localStore.save(document) }
+        markLocalSaved(saved)
+        if (scheduleRemoteSync && document.dirty) scheduleSync(document.localId, 0)
     }
 
     private fun scheduleSync(localId: String, delayMillis: Long) {
@@ -543,19 +747,21 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
         lateinit var job: Job
         job = viewModelScope.launch {
             delay(delayMillis)
+            var retryDelay: Long? = null
             try {
-                syncDocument(localId)
+                retryDelay = syncDocument(localId)
             } finally {
                 if (syncJobs[localId] === job) syncJobs.remove(localId)
             }
+            retryDelay?.let { scheduleSync(localId, it) }
         }
         syncJobs[localId] = job
     }
 
-    private suspend fun syncDocument(localId: String) {
-        val token = accessToken ?: return
-        val snapshot = withContext(Dispatchers.IO) { localStore.find(localId) } ?: return
-        if (!snapshot.dirty) return
+    private suspend fun syncDocument(localId: String): Long? {
+        val token = accessToken ?: return null
+        val snapshot = withContext(Dispatchers.IO) { localStore.find(localId) } ?: return null
+        if (!snapshot.dirty) return null
         syncingDrafts += localId
         updateDocumentStatus(snapshot, SaveState.Saving)
         try {
@@ -587,24 +793,46 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
                     opened.file.id,
                     opened.etag,
                 )
-            } ?: return
+            } ?: return null
             syncingDrafts -= localId
+            syncRetryAttempts.remove(localId)
             folderCache.clear()
             onDocumentSynced(snapshot, saved, opened.file)
             if (saved.dirty) {
                 syncJobs.remove(localId)
-                scheduleSync(saved.localId, AUTOSAVE_INTERVAL_MS)
+                scheduleSync(saved.localId, REMOTE_SYNC_IDLE_MS)
             }
+            return null
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
             val message = error.message ?: "Google Drive sync failed"
             val failed = withContext(Dispatchers.IO) { localStore.markFailed(localId, message) } ?: snapshot
             if (error is DriveException.Unauthorized) accessToken = null
-            updateDocumentStatus(failed, SaveState.Failed, "Sync issue: $message")
+            updateDocumentStatus(failed, SaveState.Failed)
+            return nextRetryDelay(localId, error)
         } finally {
             syncingDrafts -= localId
         }
+    }
+
+    private fun markLocalSaved(document: LocalMarkdownDocument) {
+        val active = activeDraft ?: return
+        if (active.localId != document.localId || active.revision != document.revision) return
+        state.value = state.value.copy(localSaveState = LocalSaveState.Saved)
+    }
+
+    private fun nextRetryDelay(localId: String, error: Throwable): Long? {
+        val retryable = when (error) {
+            is DriveException.Unauthorized, is DriveException.Conflict -> false
+            is DriveException.Http -> error.code >= 500 || error.code == 429
+            else -> true
+        }
+        if (!retryable) return null
+        val attempt = (syncRetryAttempts[localId] ?: 0) + 1
+        syncRetryAttempts[localId] = attempt
+        val multiplier = 1L shl minOf(attempt - 1, 5)
+        return minOf(SYNC_RETRY_BASE_MS * multiplier, SYNC_RETRY_MAX_MS)
     }
 
     private fun onDocumentSynced(
@@ -659,6 +887,7 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
         state.value = state.value.copy(
             authorized = accessToken != null,
             loading = false,
+            refreshing = false,
             validationState = if (state.value.validationState == ValidationState.Checking) {
                 ValidationState.Failed
             } else {
@@ -690,8 +919,10 @@ class OpenGDriveViewModel(application: Application) : AndroidViewModel(applicati
     )
 
     companion object {
-        const val AUTOSAVE_INTERVAL_MS = 5_000L
-        private const val LOCAL_SAVE_DEBOUNCE_MS = 150L
+        const val REMOTE_SYNC_IDLE_MS = 30_000L
+        private const val LOCAL_SAVE_DEBOUNCE_MS = 750L
+        private const val SYNC_RETRY_BASE_MS = 10_000L
+        private const val SYNC_RETRY_MAX_MS = 5 * 60_000L
         private const val LOCAL_FILE_PREFIX = "local:"
 
         internal fun nextUntitledName(existingNames: List<String>): String {

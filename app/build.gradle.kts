@@ -75,6 +75,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
     implementation("com.squareup.moshi:moshi:1.15.2")
     implementation("io.github.ardasoyturk.compose.icons:simple-icons:2.0.7")
+    implementation("io.github.rosemoe:editor:0.24.4")
 
     implementation("io.noties.markwon:core:4.6.2")
     implementation("io.noties.markwon:ext-strikethrough:4.6.2")

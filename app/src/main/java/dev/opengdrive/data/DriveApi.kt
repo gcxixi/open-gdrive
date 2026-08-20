@@ -16,17 +16,27 @@ class DriveApi(
     private val client: OkHttpClient = OkHttpClient(),
 ) {
     suspend fun listFiles(accessToken: String, folderId: String = "all"): List<DriveFile> =
+        listChildren(accessToken, folderId, foldersOnly = false)
+
+    suspend fun listFolders(accessToken: String, folderId: String = "root"): List<DriveFile> =
+        listChildren(accessToken, folderId, foldersOnly = true)
+
+    private suspend fun listChildren(
+        accessToken: String,
+        folderId: String,
+        foldersOnly: Boolean,
+    ): List<DriveFile> =
         withContext(Dispatchers.IO) {
             val files = mutableListOf<DriveFile>()
             var pageToken: String? = null
             do {
                 val url = "https://www.googleapis.com/drive/v3/files".toHttpUrl().newBuilder()
-                    .addQueryParameter("q", childQuery(folderId))
+                    .addQueryParameter("q", childQuery(folderId, foldersOnly))
                     .addQueryParameter("orderBy", "folder,name_natural")
                     .addQueryParameter("pageSize", "100")
                     .addQueryParameter(
                         "fields",
-                        "nextPageToken,files(id,name,mimeType,modifiedTime,size,webViewLink," +
+                        "nextPageToken,files(id,name,mimeType,modifiedTime,size,webViewLink,parents," +
                             "capabilities(canEdit,canDownload))",
                     )
                     .addQueryParameter("spaces", "drive")
@@ -55,7 +65,7 @@ class DriveApi(
         val url = "https://www.googleapis.com/drive/v3/files/$fileId".toHttpUrl().newBuilder()
             .addQueryParameter(
                 "fields",
-                "id,name,mimeType,modifiedTime,size,webViewLink,capabilities(canEdit,canDownload)",
+                "id,name,mimeType,modifiedTime,size,webViewLink,parents,capabilities(canEdit,canDownload)",
             )
             .build()
         client.newCall(authorizedRequest(url.toString(), accessToken).build()).execute().use { response ->
@@ -109,7 +119,7 @@ class DriveApi(
             .addQueryParameter("uploadType", "multipart")
             .addQueryParameter(
                 "fields",
-                "id,name,mimeType,modifiedTime,size,webViewLink,capabilities(canEdit,canDownload)",
+                "id,name,mimeType,modifiedTime,size,webViewLink,parents,capabilities(canEdit,canDownload)",
             )
             .build()
         client.newCall(
@@ -148,6 +158,35 @@ class DriveApi(
             ensureSuccessful(response.code, responseBody)
         }
     }
+
+    suspend fun move(file: DriveFile, destinationId: String, accessToken: String): DriveFile =
+        withContext(Dispatchers.IO) {
+            val current = if (file.parents.isNotEmpty()) file else getMetadata(file.id, accessToken).file
+            if (destinationId in current.parents) return@withContext current
+            val url = "https://www.googleapis.com/drive/v3/files/${file.id}".toHttpUrl().newBuilder()
+                .addQueryParameter("addParents", destinationId)
+                .apply {
+                    current.parents.takeIf { it.isNotEmpty() }?.joinToString(",")?.let {
+                        addQueryParameter("removeParents", it)
+                    }
+                }
+                .addQueryParameter(
+                    "fields",
+                    "id,name,mimeType,modifiedTime,size,webViewLink,parents," +
+                        "capabilities(canEdit,canDownload)",
+                )
+                .build()
+            client.newCall(
+                authorizedRequest(url.toString(), accessToken)
+                    .patch("{}".toRequestBody(JSON_MEDIA_TYPE))
+                    .build(),
+            ).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                ensureSuccessful(response.code, body)
+                parseDriveFileJson(body)
+                    ?: throw DriveException.Http(response.code, "Drive returned no moved file metadata")
+            }
+        }
 
     private fun fetchPreview(
         file: DriveFile,
@@ -231,6 +270,7 @@ class DriveApi(
             var size: String? = null
             var webViewLink: String? = null
             var capabilities: DriveCapabilities? = null
+            var parents = emptyList<String>()
             reader.beginObject()
             while (reader.hasNext()) {
                 when (reader.nextName()) {
@@ -241,12 +281,13 @@ class DriveApi(
                     "size" -> size = reader.nextNullableString()
                     "webViewLink" -> webViewLink = reader.nextNullableString()
                     "capabilities" -> capabilities = parseCapabilities(reader)
+                    "parents" -> parents = reader.readStringList()
                     else -> reader.skipValue()
                 }
             }
             reader.endObject()
             return if (id != null && name != null) {
-                DriveFile(id, name, mimeType, modifiedTime, size, webViewLink, capabilities)
+                DriveFile(id, name, mimeType, modifiedTime, size, webViewLink, capabilities, parents)
             } else {
                 null
             }
@@ -270,10 +311,19 @@ class DriveApi(
         private fun JsonReader.nextNullableString(): String? =
             if (peek() == JsonReader.Token.NULL) nextNull() else nextString()
 
-        internal fun childQuery(folderId: String): String {
-            if (folderId == "all") return "trashed = false"
+        private fun JsonReader.readStringList(): List<String> {
+            val values = mutableListOf<String>()
+            beginArray()
+            while (hasNext()) nextNullableString()?.let(values::add)
+            endArray()
+            return values
+        }
+
+        internal fun childQuery(folderId: String, foldersOnly: Boolean = false): String {
+            val folderClause = if (foldersOnly) " and mimeType = '$GOOGLE_FOLDER'" else ""
+            if (folderId == "all") return "trashed = false$folderClause"
             val escaped = folderId.replace("\\", "\\\\").replace("'", "\\'")
-            return "trashed = false and '$escaped' in parents"
+            return "trashed = false and '$escaped' in parents$folderClause"
         }
 
         internal fun createMetadataJson(name: String, parentId: String, localId: String): String = buildString {
